@@ -114,6 +114,12 @@ class Settings:
     # Maps specific pairs to a list of strategy configurations
     # Each entry contains the strategy name and the timeframe it should run on
     STRATEGY_CONFIG: dict = {
+    'Volatility 10 Index': {
+            "strategies": [
+                {'strategy': 'rsi_stoch', 'timeframe': '30m'},
+            ],
+            "min_confluence": 1
+        },
         'Volatility 25 Index': {
             "strategies": [
                 {'strategy': 'mean_reversion', 'timeframe': '4h'},
@@ -126,6 +132,14 @@ class Settings:
                 {'strategy': 'cci_trend', 'timeframe': '1h'},
                 {'strategy': 'support_resistance', 'timeframe': '4h'},
             ],
+            "min_confluence": 1
+        },
+        'Volatility 100 Index': {
+            "strategies": [
+                {'strategy': 'rsi_stoch', 'timeframe': '1h'},
+                {'strategy': 'cci_trend', 'timeframe': '1h'},
+            ],
+            # Confluence of 2 for higher probability
             "min_confluence": 1
         },
         'default': [

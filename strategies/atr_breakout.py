@@ -4,6 +4,7 @@ import ta
 from dataclasses import dataclass
 from config.settings import settings
 from typing import Tuple
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -14,7 +15,7 @@ class SignalResult:
     take_profit: float = 0.0
     reason: str = ""
 
-class ATRBreakoutStrategy:
+class ATRBreakoutStrategy(BaseStrategy):
     def __init__(self, atr_period=14, multiplier=2.0):
         self.atr_period = atr_period
         self.multiplier = multiplier
@@ -34,24 +35,6 @@ class ATRBreakoutStrategy:
         
         return df
 
-    def _get_sl_tp_settings(self, pair: str) -> Tuple[float, float]:
-        """
-        Returns (sl_pct, tp_min_pct) based on asset class.
-        """
-        if "Vol" in pair or "Index" in pair:
-            return settings.SL_PCT_INDICES, settings.TP_MIN_PCT_INDICES
-        else:
-            return settings.SL_PCT_FOREX, settings.TP_MIN_PCT_FOREX
-
-    def _calculate_dynamic_tp(self, price: float, atr: float, tp_min_pct: float) -> float:
-        """
-        Calculate Dynamic TP distance based on ATR, clamped between min_pct and max_pct.
-        """
-        # Updated to use global ATR Multipliers (approx 1:1 risk/reward for small wins)
-        raw_tp_dist = atr * settings.ATR_MULTIPLIER_TP
-        min_tp_dist = price * tp_min_pct
-        max_tp_dist = price * settings.TP_MAX_PCT
-        return max(min_tp_dist, min(max_tp_dist, raw_tp_dist))
 
     def check_exit(self, curr: pd.Series, trade: dict) -> Tuple[bool, str]:
         """
@@ -81,7 +64,7 @@ class ATRBreakoutStrategy:
         lower_bound = prev["low"] - (prev["atr"] * self.multiplier)
         
         # Get dynamic settings for this pair
-        sl_pct, tp_min_pct = self._get_sl_tp_settings(pair)
+        sl_mult, tp_mult = self._get_sl_tp_settings(pair)
         
         # ─── Trend & Momentum Filters ───
         # 1. Trend Filter: Only Buy above EMA 50, Sell below EMA 50
@@ -94,16 +77,8 @@ class ATRBreakoutStrategy:
         rsi_sell_ok = curr["rsi"] > 30
         
         if curr["close"] > upper_bound and is_uptrend and rsi_buy_ok:
-             # Calculate SL distance based on ATR (1.5x) or Fixed %?
-             # Let's use ATR based SL for breakouts as volatility varies
-             atr_sl = curr["atr"] * settings.ATR_MULTIPLIER_SL
-             
-             # Fallback to fixed % if ATR is weird, or take max
-             fixed_sl = curr["close"] * sl_pct
-             sl_dist = max(atr_sl, fixed_sl)
-             
-             # Dynamic TP
-             tp_dist = self._calculate_dynamic_tp(curr["close"], curr["atr"], tp_min_pct)
+             sl_dist = curr["atr"] * sl_mult
+             tp_dist = curr["atr"] * tp_mult
              
              sl = curr["close"] - sl_dist
              tp = curr["close"] + tp_dist
@@ -111,13 +86,8 @@ class ATRBreakoutStrategy:
              return SignalResult("BUY", pair, curr["close"], sl, tp, reason="ATR Breakout Upper + Trend Confirmed")
              
         elif curr["close"] < lower_bound and is_downtrend and rsi_sell_ok:
-             # SL Calculation
-             atr_sl = curr["atr"] * settings.ATR_MULTIPLIER_SL
-             fixed_sl = curr["close"] * sl_pct
-             sl_dist = max(atr_sl, fixed_sl)
-             
-             # TP Calculation
-             tp_dist = self._calculate_dynamic_tp(curr["close"], curr["atr"], tp_min_pct)
+             sl_dist = curr["atr"] * sl_mult
+             tp_dist = curr["atr"] * tp_mult
              
              sl = curr["close"] + sl_dist
              tp = curr["close"] - tp_dist

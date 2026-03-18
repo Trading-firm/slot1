@@ -127,6 +127,7 @@ Perform these steps **inside** the remote desktop window.
       MONGO_URI=mongodb+srv://<username>:<password>@cluster0.example.mongodb.net/?retryWrites=true&w=majority
       ```
     - **IMPORTANT:** Go to your MongoDB Atlas Dashboard > Network Access > Add IP Address > **"Allow Access from Anywhere" (0.0.0.0/0)**.
+    - *Security Note:* For a production environment, it is more secure to find the static IP address of your VPS and add only that IP address to the allow list. "Allow Access from Anywhere" is simpler for setup but less secure.
     - If you don't do this, the VPS cannot connect to the database.
 6.  Save and close.
 

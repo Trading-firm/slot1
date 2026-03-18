@@ -25,6 +25,7 @@ from strategies.parabolic_sar import ParabolicSARStrategy
 from strategies.rsi_stoch import RSIStochStrategy
 from strategies.support_resistance import SupportResistanceStrategy
 from strategies.candlestick_pattern import CandlestickPatternStrategy
+from strategies.fvg_strategy import FVGStrategy
 from utils.risk_manager import RiskManager
 from database.models import init_db
 from database.repository import (
@@ -59,7 +60,8 @@ class TradingEngine:
             "parabolic_sar": ParabolicSARStrategy(),
             "rsi_stoch": RSIStochStrategy(),
             "support_resistance": SupportResistanceStrategy(),
-            "candlestick_pattern": CandlestickPatternStrategy()
+            "candlestick_pattern": CandlestickPatternStrategy(),
+            "fvg": FVGStrategy()
         }
         
         self.risk     = RiskManager()

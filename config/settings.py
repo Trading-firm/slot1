@@ -114,12 +114,21 @@ class Settings:
     # Maps specific pairs to a list of strategy configurations
     # Each entry contains the strategy name and the timeframe it should run on
     STRATEGY_CONFIG: dict = {
+    # -------------------------------------------------------------------------
+    # VOLATILITY 10 INDEX SETTINGS
     'Volatility 10 Index': {
             "strategies": [
-                {'strategy': 'rsi_stoch', 'timeframe': '30m'},
+                {'strategy': 'fvg', 'timeframe': '1h'},
+                {'strategy': 'mean_reversion', 'timeframe': '4h'},
+                {'strategy': 'cci_trend', 'timeframe': '1h'},
+                {'strategy': 'candlestick_pattern', 'timeframe': '30m'},
+                {'strategy': 'stochastic', 'timeframe': '4h'},
             ],
-            "min_confluence": 1
+            "min_confluence": 2
         },
+    # NOTE: Run 'python backtest_vol10_strategies.py' to find the absolute best 
+    # strategy for current market conditions and update the section above.
+    # -------------------------------------------------------------------------
         'Volatility 25 Index': {
             "strategies": [
                 {'strategy': 'mean_reversion', 'timeframe': '4h'},

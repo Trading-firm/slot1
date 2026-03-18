@@ -119,27 +119,25 @@ def run_backtest(symbol, tf_name, timeframe_enum):
                 
                 if signal in ["BUY", "SELL"]:
                     # Execute Trade
-                    entry_price = current_candle['close']
-                    atr = current_candle['atr']
-                    
-                    if pd.isna(atr):
+                    entry_price = res.close # Use close price from signal result
+                    sl = res.stop_loss
+                    tp = res.take_profit
+
+                    # Ensure the strategy returned a valid SL/TP
+                    if sl == 0.0 or tp == 0.0:
                         continue
-                        
-                    sl_dist = atr * SL_ATR_MULT
-                    tp_dist = atr * TP_ATR_MULT
-                    
-                    if signal == "BUY":
-                        sl = entry_price - sl_dist
-                        tp = entry_price + tp_dist
-                    else:
-                        sl = entry_price + sl_dist
-                        tp = entry_price - tp_dist
                         
                     # Simulate Outcome
                     outcome = "OPEN"
                     pnl = 0.0
                     exit_index = i
                     
+                    # PNL is the distance from entry to TP.
+                    # SL distance is also calculated for loss case.
+                    # This assumes a fixed SL/TP and doesn't account for slippage.
+                    tp_dist = abs(tp - entry_price)
+                    sl_dist = abs(sl - entry_price)
+
                     for j in range(i+1, len(df)):
                         future_candle = df.iloc[j]
                         high = future_candle['high']

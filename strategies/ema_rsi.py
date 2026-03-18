@@ -28,6 +28,7 @@ from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 from config.settings import settings
 from utils.logger import logger
+from strategies.base_strategy import BaseStrategy
 
 
 # ─── Signal Result Dataclass ──────────────────────────────
@@ -54,7 +55,7 @@ class SignalResult:
         )
 
 
-class EMARSIStrategy:
+class EMARSIStrategy(BaseStrategy):
     """
     EMA Crossover + RSI Filter Strategy.
     Instantiate once and call analyse() on each candle batch.
@@ -145,16 +146,6 @@ class EMARSIStrategy:
         df.dropna(subset=["ema_fast", "ema_slow", "rsi", "atr", "adx"], inplace=True)
         return df
 
-    def _calculate_sl_tp(self, price: float, atr: float) -> tuple[float, float]:
-        """
-        Calculate SL and TP distances using standardized ATR settings.
-        SL = 1.5 * ATR (High Probability)
-        TP = 1.5 * ATR (1:1 Risk:Reward for Small Wins)
-        """
-        sl_dist = atr * settings.ATR_MULTIPLIER_SL
-        tp_dist = atr * settings.ATR_MULTIPLIER_TP
-        return sl_dist, tp_dist
-
     def check_signal(self, curr: pd.Series, pair: str) -> SignalResult:
         close    = float(curr["close"])
         ema_fast = float(curr["ema_fast"])
@@ -168,6 +159,9 @@ class EMARSIStrategy:
         bull_x   = bool(curr["bullish_cross"])
         bear_x   = bool(curr["bearish_cross"])
 
+        # Get dynamic settings for this pair
+        sl_mult, tp_mult = self._get_sl_tp_settings(pair)
+
         # ── BUY Signal ────────────────────────────────────
         # Trend Filter: Only Buy if Price > EMA 200 (if available)
         trend_ok_buy = (close > ema_trend) if ema_trend else True
@@ -180,7 +174,8 @@ class EMARSIStrategy:
             if rsi_buy_ok:
                 if trend_ok_buy:
                     if adx > self.adx_threshold:
-                        sl_dist, tp_dist = self._calculate_sl_tp(close, atr)
+                        sl_dist = atr * sl_mult
+                        tp_dist = atr * tp_mult
                         
                         sl = round(close - sl_dist, 5)
                         tp = round(close + tp_dist, 5)
@@ -209,7 +204,8 @@ class EMARSIStrategy:
             if rsi_sell_ok:
                 if trend_ok_sell:
                     if adx > self.adx_threshold:
-                        sl_dist, tp_dist = self._calculate_sl_tp(close, atr)
+                        sl_dist = atr * sl_mult
+                        tp_dist = atr * tp_mult
                         
                         sl = round(close + sl_dist, 5)
                         tp = round(close - tp_dist, 5)

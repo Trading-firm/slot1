@@ -4,6 +4,7 @@ import ta
 from dataclasses import dataclass
 from typing import Optional, Tuple
 from config.settings import settings
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -18,7 +19,7 @@ class SignalResult:
     bb_mid: float = 0.0
     bandwidth: float = 0.0
 
-class BollingerBreakoutStrategy:
+class BollingerBreakoutStrategy(BaseStrategy):
     """
     Bollinger Band Breakout Strategy.
     captures explosive moves when price breaks outside the bands during expansion.
@@ -54,16 +55,6 @@ class BollingerBreakoutStrategy:
         
         return df
 
-    def _calculate_sl_tp(self, price: float, atr: float) -> tuple[float, float]:
-        """
-        Calculate SL and TP distances using standardized ATR settings.
-        SL = 1.5 * ATR (High Probability)
-        TP = 1.5 * ATR (1:1 Risk:Reward for Small Wins)
-        """
-        sl_dist = atr * settings.ATR_MULTIPLIER_SL
-        tp_dist = atr * settings.ATR_MULTIPLIER_TP # Use Global 1.5x setting
-        return sl_dist, tp_dist
-
     def check_signal(self, curr: pd.Series, prev: pd.Series, pair: str) -> SignalResult:
         close = curr["close"]
         upper = curr["bb_upper"]
@@ -86,11 +77,15 @@ class BollingerBreakoutStrategy:
         # Buy: RSI > 50 (Bullish momentum) but < 70 (Not overbought yet)
         # Sell: RSI < 50 (Bearish momentum) but > 30 (Not oversold yet)
 
+        # Get dynamic settings for this pair
+        sl_mult, tp_mult = self._get_sl_tp_settings(pair)
+
         # ── BUY Signal ────────────────────────────────────
         # Price closes ABOVE Upper Band
         if close > upper and is_expanding and is_strong_trend:
             if 50 < rsi < 75: # Valid momentum range
-                sl_dist, tp_dist = self._calculate_sl_tp(close, atr)
+                sl_dist = atr * sl_mult
+                tp_dist = atr * tp_mult
                 
                 sl = round(close - sl_dist, 5) 
                 tp = round(close + tp_dist, 5)
@@ -112,7 +107,8 @@ class BollingerBreakoutStrategy:
         # Price closes BELOW Lower Band
         if close < lower and is_expanding and is_strong_trend:
              if 25 < rsi < 50: # Valid momentum range
-                sl_dist, tp_dist = self._calculate_sl_tp(close, atr)
+                sl_dist = atr * sl_mult
+                tp_dist = atr * tp_mult
                 
                 sl = round(close + sl_dist, 5) 
                 tp = round(close - tp_dist, 5)

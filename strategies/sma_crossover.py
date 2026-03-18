@@ -4,6 +4,7 @@ import ta
 from dataclasses import dataclass
 from typing import Tuple, Optional
 from config.settings import settings
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -14,7 +15,7 @@ class SignalResult:
     take_profit: float = 0.0
     reason: str = ""
 
-class SMACrossoverStrategy:
+class SMACrossoverStrategy(BaseStrategy):
     def __init__(self, fast=50, slow=200):
         self.fast = fast
         self.slow = slow
@@ -40,15 +41,6 @@ class SMACrossoverStrategy:
         
         return df
 
-    def _calculate_sl_tp(self, price: float, atr: float) -> tuple[float, float]:
-        """
-        Calculate SL and TP distances using standardized ATR settings.
-        SL = 1.5 * ATR (High Probability)
-        TP = 1.5 * ATR (1:1 Risk:Reward for Small Wins)
-        """
-        sl_dist = atr * settings.ATR_MULTIPLIER_SL
-        tp_dist = atr * settings.ATR_MULTIPLIER_TP
-        return sl_dist, tp_dist
 
     def check_signal(self, curr: pd.Series, prev: pd.Series, pair: str) -> SignalResult:
         adx = float(curr["adx"])
@@ -58,6 +50,9 @@ class SMACrossoverStrategy:
         if adx < 20:
              return SignalResult("NONE", pair, curr["close"], reason=f"Weak Trend (ADX {adx:.1f} < 20)")
 
+        # Get dynamic settings for this pair
+        sl_mult, tp_mult = self._get_sl_tp_settings(pair)
+
         # Golden Cross
         # 1. Fast SMA crosses above Slow SMA
         # 2. RSI is < 70 (Not Overbought)
@@ -65,7 +60,8 @@ class SMACrossoverStrategy:
             if rsi > 70:
                  return SignalResult("NONE", pair, curr["close"], reason=f"Overbought (RSI {rsi:.1f})")
 
-            sl_dist, tp_dist = self._calculate_sl_tp(curr["close"], curr["atr"])
+            sl_dist = curr["atr"] * sl_mult
+            tp_dist = curr["atr"] * tp_mult
             
             sl = curr["close"] - sl_dist
             tp = curr["close"] + tp_dist
@@ -78,7 +74,8 @@ class SMACrossoverStrategy:
             if rsi < 30:
                  return SignalResult("NONE", pair, curr["close"], reason=f"Oversold (RSI {rsi:.1f})")
 
-            sl_dist, tp_dist = self._calculate_sl_tp(curr["close"], curr["atr"])
+            sl_dist = curr["atr"] * sl_mult
+            tp_dist = curr["atr"] * tp_mult
             
             sl = curr["close"] + sl_dist
             tp = curr["close"] - tp_dist

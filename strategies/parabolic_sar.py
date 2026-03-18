@@ -4,6 +4,7 @@ import ta
 from dataclasses import dataclass
 from typing import Tuple
 from config.settings import settings
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -15,7 +16,7 @@ class SignalResult:
     reason: str = ""
     psar: float = 0.0
 
-class ParabolicSARStrategy:
+class ParabolicSARStrategy(BaseStrategy):
     def __init__(self, step=0.02, max_step=0.2):
         self.step = step
         self.max_step = max_step
@@ -44,26 +45,6 @@ class ParabolicSARStrategy:
         
         return df
 
-    def _calculate_sl_tp(self, price: float, atr: float, psar: float, direction: str, pair: str = "") -> tuple[float, float]:
-        """
-        Calculate SL and TP using global 1:1 Risk:Reward standard or asset specific overrides.
-        """
-        sl_mult = settings.ATR_MULTIPLIER_SL
-        tp_mult = settings.ATR_MULTIPLIER_TP
-        
-        if "Volatility 75" in pair or "Vol 75" in pair or "R_75" in pair:
-            sl_mult = settings.VOL75_SL_ATR_MULT
-            tp_mult = settings.VOL75_TP_ATR_MULT
-        elif "Volatility 25" in pair or "Vol 25" in pair or "R_25" in pair:
-            sl_mult = settings.VOL25_SL_ATR_MULT
-            tp_mult = settings.VOL25_TP_ATR_MULT
-        elif "Volatility 10" in pair or "Vol 10" in pair or "R_10" in pair:
-            sl_mult = settings.VOL10_SL_ATR_MULT
-            tp_mult = settings.VOL10_TP_ATR_MULT
-            
-        sl_dist = atr * sl_mult
-        tp_dist = atr * tp_mult
-        return sl_dist, tp_dist
 
     def check_signal(self, curr: pd.Series, prev: pd.Series, pair: str) -> SignalResult:
         close = float(curr["close"])
@@ -75,6 +56,9 @@ class ParabolicSARStrategy:
         
         prev_below = prev["close"] < prev["psar"]
         curr_above = curr["close"] > curr["psar"]
+        
+        # Get dynamic settings for this pair
+        sl_mult, tp_mult = self._get_sl_tp_settings(pair)
         
         # Filter: ADX > 20 (Ensure Trend Strength)
         if adx < 20:
@@ -91,7 +75,8 @@ class ParabolicSARStrategy:
              if rsi > 70:
                  return SignalResult("NONE", pair, close, reason=f"Overbought (RSI {rsi:.1f})")
 
-             sl_dist, tp_dist = self._calculate_sl_tp(close, atr, psar, "BUY", pair=pair)
+             sl_dist = atr * sl_mult
+             tp_dist = atr * tp_mult
              
              sl = close - sl_dist
              tp = close + tp_dist
@@ -111,7 +96,8 @@ class ParabolicSARStrategy:
              if rsi < 30:
                  return SignalResult("NONE", pair, close, reason=f"Oversold (RSI {rsi:.1f})")
 
-             sl_dist, tp_dist = self._calculate_sl_tp(close, atr, psar, "SELL")
+             sl_dist = atr * sl_mult
+             tp_dist = atr * tp_mult
              
              sl = close + sl_dist
              tp = close - tp_dist

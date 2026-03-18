@@ -4,6 +4,7 @@ import ta
 from dataclasses import dataclass
 from typing import Tuple
 from config.settings import settings
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -18,7 +19,7 @@ class SignalResult:
     bb_mid: float = 0.0
     rsi: float = 0.0
 
-class MeanReversionStrategy:
+class MeanReversionStrategy(BaseStrategy):
     """
     Mean Reversion Strategy using Bollinger Bands + RSI.
     Works best in RANGING markets (low ADX).
@@ -27,7 +28,7 @@ class MeanReversionStrategy:
     """
 
     def __init__(self, window: int = 20, dev: float = 2.0, rsi_period: int = 14, 
-                 rsi_lower: float = 35.0, rsi_upper: float = 65.0, adx_threshold: float = 25.0):
+                 rsi_lower: float = 30.0, rsi_upper: float = 70.0, adx_threshold: float = 25.0):
         self.window = window
         self.dev = dev
         self.rsi_period = rsi_period
@@ -56,15 +57,7 @@ class MeanReversionStrategy:
         
         return df
 
-    def _get_sl_tp_settings(self, pair: str):
-        """
-        Returns (sl_atr_mult, tp_atr_mult, sl_type) based on global 1:1 Risk:Reward standard.
-        """
-        sl_mult = settings.ATR_MULTIPLIER_SL
-        tp_mult = settings.ATR_MULTIPLIER_TP
-        return sl_mult, tp_mult, "atr"
-
-    def check_signal(self, curr: pd.Series, pair: str) -> SignalResult:
+    def check_signal(self, curr: pd.Series, prev: pd.Series, pair: str) -> SignalResult:
         close = float(curr["close"])
         upper = float(curr["bb_upper"])
         lower = float(curr["bb_lower"])
@@ -84,60 +77,65 @@ class MeanReversionStrategy:
             )
 
         # Get dynamic settings for this pair
-        sl_param, tp_param, sl_type = self._get_sl_tp_settings(pair)
+        sl_param, _ = self._get_sl_tp_settings(pair)
         
         sl_dist = atr * sl_param
-        tp_dist = atr * tp_param
 
-        # ── BUY Signal (Oversold Bounce) ──────────────────
-        # Price touches/breaks Lower Band AND RSI < 30 (Extreme Oversold)
-        if close <= lower and rsi < self.rsi_lower:
+        # ── BUY Signal (Oversold Bounce with Confirmation) ──────────────────
+        # 1. Previous candle was outside or touching the lower band.
+        # 2. Current candle closed back INSIDE the lower band.
+        # 3. RSI confirms oversold condition.
+        if prev["close"] <= prev["bb_lower"] and close > lower and rsi < self.rsi_lower:
             sl = close - sl_dist
-            tp = close + tp_dist
+            tp = mid # Target the mean
+            
+            # Sanity Check: TP must be profitable
+            if tp <= close:
+                return SignalResult("NONE", pair, close, reason=f"TP target {tp:.5f} is not above entry {close:.5f}")
             
             return SignalResult(
                 signal="BUY", pair=pair, close=close,
                 stop_loss=sl, take_profit=tp,
                 bb_upper=upper, bb_lower=lower, rsi=rsi,
-                reason=f"Price <= Lower BB + RSI Oversold ({rsi:.1f} < {self.rsi_lower}) + Ranging (ADX {adx:.1f})"
+                reason=f"Confirmed bounce from Lower BB + RSI Oversold ({rsi:.1f} < {self.rsi_lower}) + Ranging (ADX {adx:.1f})"
             )
 
-        # ── SELL Signal (Overbought Reversal) ─────────────
-        # Price touches/breaks Upper Band AND RSI > 70 (Extreme Overbought)
-        if close >= upper and rsi > self.rsi_upper:
+        # ── SELL Signal (Overbought Reversal with Confirmation) ─────────────
+        # 1. Previous candle was outside or touching the upper band.
+        # 2. Current candle closed back INSIDE the upper band.
+        # 3. RSI confirms overbought condition.
+        if prev["close"] >= prev["bb_upper"] and close < upper and rsi > self.rsi_upper:
             sl = close + sl_dist
-            tp = close - tp_dist
+            tp = mid # Target the mean
+
+            # Sanity Check: TP must be profitable
+            if tp >= close:
+                return SignalResult("NONE", pair, close, reason=f"TP target {tp:.5f} is not below entry {close:.5f}")
             
             return SignalResult(
                 signal="SELL", pair=pair, close=close,
                 stop_loss=sl, take_profit=tp,
                 bb_upper=upper, bb_lower=lower, rsi=rsi,
-                reason=f"Price >= Upper BB + RSI Overbought ({rsi:.1f} > {self.rsi_upper}) + Ranging (ADX {adx:.1f})"
+                reason=f"Confirmed rejection from Upper BB + RSI Overbought ({rsi:.1f} > {self.rsi_upper}) + Ranging (ADX {adx:.1f})"
             )
 
         return SignalResult(
             signal="NONE", pair=pair, close=close,
             bb_upper=upper, bb_lower=lower, rsi=rsi,
-            reason=f"No Reversion (RSI={rsi:.1f}, ADX={adx:.1f})"
+            reason=f"No confirmed reversion (RSI={rsi:.1f}, ADX={adx:.1f})"
         )
 
     def check_exit(self, curr: pd.Series, trade: dict) -> Tuple[bool, str]:
         """
-        Check if we should exit the trade early based on strategy logic.
+        Early exit if market conditions change from Ranging to Trending.
         """
-        direction = trade["direction"]
-        close = float(curr["close"])
-        mid = float(curr["bb_mid"])
+        adx = float(curr["adx"])
         
-        # Exit Buy if Price reaches Middle Band (Dynamic TP)
-        if direction == "BUY":
-            if close >= mid:
-                 return True, "Exit Signal: Reached Middle Band"
-                 
-        # Exit Sell if Price reaches Middle Band (Dynamic TP)
-        elif direction == "SELL":
-             if close <= mid:
-                 return True, "Exit Signal: Reached Middle Band"
+        # If ADX spikes, the ranging assumption is invalid. Exit the trade.
+        # Using a slightly higher threshold for exit than for entry.
+        exit_adx_threshold = self.adx_threshold + 5
+        if adx > exit_adx_threshold:
+             return True, f"Exit Signal: Market is now trending (ADX {adx:.1f} > {exit_adx_threshold})"
                  
         return False, ""
 
@@ -147,7 +145,8 @@ class MeanReversionStrategy:
 
         df = self.calculate_indicators(df)
 
-        # Use latest COMPLETED candle (index -2)
+        # Use the last COMPLETED candle (index -2) to avoid repainting
         curr = df.iloc[-2]
+        prev = df.iloc[-3]
         
-        return self.check_signal(curr, pair)
+        return self.check_signal(curr, prev, pair)

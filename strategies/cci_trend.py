@@ -4,6 +4,7 @@ import ta
 from dataclasses import dataclass
 from typing import Tuple
 from config.settings import settings
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -15,7 +16,7 @@ class SignalResult:
     reason: str = ""
     cci: float = 0.0
 
-class CCITrendStrategy:
+class CCITrendStrategy(BaseStrategy):
     def __init__(self, period=20, threshold=100):
         self.period = period
         self.threshold = threshold
@@ -40,25 +41,6 @@ class CCITrendStrategy:
         
         return df
 
-    def _get_sl_tp_settings(self, pair: str):
-        """
-        Returns (sl_atr_mult, tp_atr_mult, sl_type) based on pair specific settings or global defaults.
-        """
-        sl_mult = settings.ATR_MULTIPLIER_SL
-        tp_mult = settings.ATR_MULTIPLIER_TP
-        
-        if "Volatility 75" in pair or "Vol 75" in pair or "R_75" in pair:
-            sl_mult = settings.VOL75_SL_ATR_MULT
-            tp_mult = settings.VOL75_TP_ATR_MULT
-        elif "Volatility 25" in pair or "Vol 25" in pair or "R_25" in pair:
-            sl_mult = settings.VOL25_SL_ATR_MULT
-            tp_mult = settings.VOL25_TP_ATR_MULT
-        elif "Volatility 10" in pair or "Vol 10" in pair or "R_10" in pair:
-            sl_mult = settings.VOL10_SL_ATR_MULT
-            tp_mult = settings.VOL10_TP_ATR_MULT
-            
-        return sl_mult, tp_mult, "atr"
-
     def check_signal(self, curr: pd.Series, prev: pd.Series, pair: str) -> SignalResult:
         close = float(curr["close"])
         cci = float(curr["cci"])
@@ -67,7 +49,7 @@ class CCITrendStrategy:
         rsi = float(curr["rsi"])
         
         # Get dynamic settings for this pair
-        sl_param, tp_param, sl_type = self._get_sl_tp_settings(pair)
+        sl_param, tp_param = self._get_sl_tp_settings(pair)
         
         # ─── Filters ───
         # 1. Trend Filter (EMA 50)

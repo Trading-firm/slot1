@@ -5,6 +5,7 @@ import ta
 from dataclasses import dataclass
 from typing import Optional, Tuple
 from config.settings import settings
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -17,7 +18,7 @@ class SignalResult:
     support: float = 0.0
     resistance: float = 0.0
 
-class SupportResistanceStrategy:
+class SupportResistanceStrategy(BaseStrategy):
     """
     Enhanced Support and Resistance Strategy.
     Identifies recent Swing Highs (Resistance) and Swing Lows (Support).
@@ -52,10 +53,6 @@ class SupportResistanceStrategy:
         
         return df
 
-    def _get_sl_tp_settings(self, pair: str) -> Tuple[float, float]:
-        # Use Global 1:1 Risk/Reward Settings (1.5x ATR)
-        return settings.ATR_MULTIPLIER_SL, settings.ATR_MULTIPLIER_TP
-
     def analyse(self, df: pd.DataFrame, pair: str) -> SignalResult:
         """
         Analyse the latest candle and return a SignalResult.
@@ -65,7 +62,7 @@ class SupportResistanceStrategy:
             
         df = self.calculate_indicators(df.copy())
         
-        # Use the last completed candle (iloc[-2]) to avoid repainting
+        # Use the last COMPLETED candle (index -2) to avoid repainting
         curr = df.iloc[-2]
         return self.check_signal(curr, pair)
 
@@ -166,4 +163,3 @@ class SupportResistanceStrategy:
                 return True, f"Early Exit: Oversold (RSI {rsi:.1f} < 25)"
 
         return False, ""
-

@@ -23,6 +23,7 @@ from strategies.bollinger_breakout import BollingerBreakoutStrategy
 from strategies.ema_rsi import EMARSIStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.sma_crossover import SMACrossoverStrategy
+from strategies.fvg_strategy import FVGStrategy
 
 # Initialize Strategies
 strategies = {
@@ -37,13 +38,15 @@ strategies = {
     "Bollinger Breakout": BollingerBreakoutStrategy(),
     "EMA + RSI": EMARSIStrategy(),
     "Mean Reversion": MeanReversionStrategy(),
-    "SMA Crossover": SMACrossoverStrategy()
+    "SMA Crossover": SMACrossoverStrategy(),
+    "FVG": FVGStrategy()
 }
 
 # Settings
 SYMBOL = "Volatility 10 Index"
 TIMEFRAMES = {
     "15m": mt5.TIMEFRAME_M15,
+    "30m": mt5.TIMEFRAME_M30,
     "1h": mt5.TIMEFRAME_H1,
     "4h": mt5.TIMEFRAME_H4
 }
@@ -52,7 +55,7 @@ TIMEFRAMES = {
 SL_ATR_MULT = 1.5
 TP_ATR_MULT = 1.5
 
-def get_data(symbol, timeframe, n=1000): # Load less data for faster testing
+def get_data(symbol, timeframe, n=10000): # Increased to 10000 for maximum accuracy
     if not mt5.initialize():
         print(f"MT5 Init Failed: {mt5.last_error()}", flush=True)
         return None
@@ -118,27 +121,25 @@ def run_backtest(symbol, tf_name, timeframe_enum):
                 
                 if signal in ["BUY", "SELL"]:
                     # Execute Trade
-                    entry_price = current_candle['close']
-                    atr = current_candle['atr']
-                    
-                    if pd.isna(atr):
+                    entry_price = res.close # Use close price from signal result
+                    sl = res.stop_loss
+                    tp = res.take_profit
+
+                    # Ensure the strategy returned a valid SL/TP
+                    if sl == 0.0 or tp == 0.0:
                         continue
-                        
-                    sl_dist = atr * SL_ATR_MULT
-                    tp_dist = atr * TP_ATR_MULT
-                    
-                    if signal == "BUY":
-                        sl = entry_price - sl_dist
-                        tp = entry_price + tp_dist
-                    else:
-                        sl = entry_price + sl_dist
-                        tp = entry_price - tp_dist
                         
                     # Simulate Outcome
                     outcome = "OPEN"
                     pnl = 0.0
                     exit_index = i
                     
+                    # PNL is the distance from entry to TP.
+                    # SL distance is also calculated for loss case.
+                    # This assumes a fixed SL/TP and doesn't account for slippage.
+                    tp_dist = abs(tp - entry_price)
+                    sl_dist = abs(sl - entry_price)
+
                     for j in range(i+1, len(df)):
                         future_candle = df.iloc[j]
                         high = future_candle['high']
@@ -184,14 +185,19 @@ def run_backtest(symbol, tf_name, timeframe_enum):
 
 if __name__ == "__main__":
     final_results = {}
+    all_configs = [] # Store flattened results for ranking
+
     for name, tf_enum in TIMEFRAMES.items():
         res = run_backtest(SYMBOL, name, tf_enum)
         if res:
             final_results[name] = res
             
-    print("\n--- FINAL SUMMARY (Sorted by PnL) ---")
+    print("\n" + "="*60)
+    print("📊 DETAILED BREAKDOWN BY TIMEFRAME")
+    print("="*60)
+    
     for tf, data in final_results.items():
-        print(f"\nTimeframe: {tf}")
+        print(f"\n--- {tf} Results ---")
         
         # Sort by PnL
         sorted_strategies = sorted(data.items(), key=lambda x: sum(x[1]["trades"]), reverse=True)
@@ -201,3 +207,41 @@ if __name__ == "__main__":
             wr = (res["wins"] / total * 100) if total > 0 else 0
             pnl = sum(res["trades"])
             print(f"  {strat_name:<25}: {total:>3} trades, {wr:>5.1f}% WR, PnL: {pnl:>8.2f}")
+            
+            all_configs.append({
+                "strategy": strat_name,
+                "timeframe": tf,
+                "pnl": pnl,
+                "wr": wr,
+                "trades": total
+            })
+
+    print("\n" + "="*60)
+    print("🏆 GRAND CHAMPIONS: BEST CONFIGS FOR VOLATILITY 10 🏆")
+    print("="*60)
+    
+    # Sort all configurations by PnL descending
+    all_configs.sort(key=lambda x: x["pnl"], reverse=True)
+    
+    if not all_configs:
+        print("No trades executed.")
+    else:
+        for i, config in enumerate(all_configs[:5]):
+            print(f"{i+1}. {config['strategy'].upper()} ({config['timeframe']})")
+            print(f"   💰 PnL: {config['pnl']:.2f} | 🎯 Win Rate: {config['wr']:.1f}% | 📉 Trades: {config['trades']}")
+            print("-" * 50)
+            
+        best = all_configs[0]
+        print("\n" + "="*60)
+        print("🚀 ACTION REQUIRED: UPDATE YOUR settings.py")
+        print("="*60)
+        print(f"Based on this backtest, update 'Volatility 10 Index' in config/settings.py to:")
+        print("")
+        print(f"    'Volatility 10 Index': {{")
+        print(f"        \"strategies\": [")
+        print(f"            {{'strategy': '{best['strategy']}', 'timeframe': '{best['timeframe']}'}},")
+        print(f"        ],")
+        print(f"        \"min_confluence\": 1")
+        print(f"    }},")
+        print("")
+            

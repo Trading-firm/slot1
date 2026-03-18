@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 from config.settings import settings
 from utils.logger import logger
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -16,7 +17,7 @@ class SignalResult:
     take_profit: Optional[float] = None
     reason: str = ""
 
-class CandlestickPatternStrategy:
+class CandlestickPatternStrategy(BaseStrategy):
     """
     Candlestick Pattern Strategy
     
@@ -126,8 +127,9 @@ class CandlestickPatternStrategy:
         # In `analyse`, it calls `check_signal(df.iloc[-1])`.
         # If `df.iloc[-1]` is the just completed candle, this is correct.
         
-        curr = df.iloc[-1]
-        prev = df.iloc[-2]
+        # Update: Standardize on -2 (last completed) to be safe across all engines
+        curr = df.iloc[-2]
+        prev = df.iloc[-3]
         
         close = curr["close"]
         atr = curr["atr"]
@@ -172,32 +174,7 @@ class CandlestickPatternStrategy:
                 reason = "Shooting Star (Pinbar) + Downtrend + ADX > 20"
 
         if signal != "NONE":
-            # Risk Management
-            # Vol 75 override (handled in strategy or global settings? Ideally global, but we can do local override if needed)
-            # We'll use the global settings which are now updated for Vol 75 in settings.py
-            
-            # If Vol 75, we need to be careful. The settings.py has VOL75_SL_ATR_MULT.
-            # But here we use self.sl_multiplier which is initialized to settings.ATR_MULTIPLIER_SL.
-            # We should check if there are overrides.
-            
-            sl_mult = self.sl_multiplier
-            tp_mult = self.tp_multiplier
-            
-            # Check for asset specific overrides (Manual check to be safe, or trust the Settings class if we update it to handle this)
-            # Since Settings class has specific variables but not a unified "get_settings(pair)" method we can call easily without logic,
-            # we will replicate the logic or just use the base defaults which might be risky for Vol 75 if not handled.
-            # Wait, I updated settings.py to have VOL75_SL_ATR_MULT.
-            # I should use it here.
-            
-            if "Volatility 75" in pair or "Vol 75" in pair or "R_75" in pair:
-                sl_mult = settings.VOL75_SL_ATR_MULT
-                tp_mult = settings.VOL75_TP_ATR_MULT
-            elif "Volatility 25" in pair or "Vol 25" in pair or "R_25" in pair:
-                sl_mult = settings.VOL25_SL_ATR_MULT
-                tp_mult = settings.VOL25_TP_ATR_MULT
-            elif "Volatility 10" in pair or "Vol 10" in pair or "R_10" in pair:
-                sl_mult = settings.VOL10_SL_ATR_MULT
-                tp_mult = settings.VOL10_TP_ATR_MULT
+            sl_mult, tp_mult = self._get_sl_tp_settings(pair)
 
             sl_dist = atr * sl_mult
             tp_dist = atr * tp_mult

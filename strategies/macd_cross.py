@@ -3,6 +3,7 @@ import pandas as pd
 import ta
 from dataclasses import dataclass
 from config.settings import settings
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -13,7 +14,7 @@ class SignalResult:
     take_profit: float = 0.0
     reason: str = ""
 
-class MACDCrossStrategy:
+class MACDCrossStrategy(BaseStrategy):
     def __init__(self, fast=12, slow=26, signal=9):
         self.fast = fast
         self.slow = slow
@@ -48,32 +49,6 @@ class MACDCrossStrategy:
         
         return df
 
-    def _get_sl_tp_settings(self, pair: str):
-        """
-        Returns (sl_atr_mult, tp_atr_mult, sl_type) based on pair specific settings or global defaults.
-        """
-        # Default Global Settings
-        sl_mult = settings.ATR_MULTIPLIER_SL
-        tp_mult = settings.ATR_MULTIPLIER_TP
-        
-        # Asset Specific Overrides
-        if "Volatility 75" in pair or "Vol 75" in pair or "R_75" in pair:
-            sl_mult = settings.VOL75_SL_ATR_MULT
-            tp_mult = settings.VOL75_TP_ATR_MULT
-        elif "Volatility 25" in pair or "Vol 25" in pair or "R_25" in pair:
-            sl_mult = settings.VOL25_SL_ATR_MULT
-            tp_mult = settings.VOL25_TP_ATR_MULT
-        elif "Volatility 10" in pair or "Vol 10" in pair or "R_10" in pair:
-            sl_mult = settings.VOL10_SL_ATR_MULT
-            tp_mult = settings.VOL10_TP_ATR_MULT
-            
-        return sl_mult, tp_mult, "atr"
-
-    def _calculate_dynamic_tp(self, price: float, atr: float, tp_min_pct: float) -> float:
-        """
-        Deprecated: Using standardized ATR-based TP.
-        """
-        return atr * settings.ATR_MULTIPLIER_TP
 
     def check_exit(self, curr: pd.Series, trade: dict) -> tuple:
         """
@@ -135,14 +110,10 @@ class MACDCrossStrategy:
         rsi_sell_ok = rsi > 30
 
         # Get dynamic settings for this pair
-        sl_param, tp_param, sl_type = self._get_sl_tp_settings(pair)
+        sl_mult, tp_mult = self._get_sl_tp_settings(pair)
 
-        if sl_type == "atr":
-            sl_dist = atr * sl_param
-            tp_dist = atr * tp_param
-        else:
-            sl_dist = close * sl_param
-            tp_dist = self._calculate_dynamic_tp(close, atr, tp_param)
+        sl_dist = atr * sl_mult
+        tp_dist = atr * tp_mult
 
         # Buy: Bullish Crossover + Uptrend + ADX + RSI Safety
         if uptrend and prev["macd"] < prev["signal_line"] and curr["macd"] > curr["signal_line"] and is_strong_trend and rsi_buy_ok:

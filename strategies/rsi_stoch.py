@@ -3,6 +3,7 @@ import pandas as pd
 import ta
 from dataclasses import dataclass
 from config.settings import settings
+from strategies.base_strategy import BaseStrategy
 
 @dataclass
 class SignalResult:
@@ -13,7 +14,7 @@ class SignalResult:
     take_profit: float = 0.0
     reason: str = ""
 
-class RSIStochStrategy:
+class RSIStochStrategy(BaseStrategy):
     """
     RSI + Stochastic Combination.
     Buy: RSI > 50 AND Stoch K crosses above 20
@@ -52,32 +53,6 @@ class RSIStochStrategy:
         
         return df
 
-    def _get_sl_tp_multipliers(self, pair: str):
-        sl_mult = settings.ATR_MULTIPLIER_SL
-        tp_mult = settings.ATR_MULTIPLIER_TP
-        
-        if "Volatility 75" in pair or "Vol 75" in pair or "R_75" in pair:
-            sl_mult = settings.VOL75_SL_ATR_MULT
-            tp_mult = settings.VOL75_TP_ATR_MULT
-        elif "Volatility 25" in pair or "Vol 25" in pair or "R_25" in pair:
-            sl_mult = settings.VOL25_SL_ATR_MULT
-            tp_mult = settings.VOL25_TP_ATR_MULT
-        elif "Volatility 10" in pair or "Vol 10" in pair or "R_10" in pair:
-            sl_mult = settings.VOL10_SL_ATR_MULT
-            tp_mult = settings.VOL10_TP_ATR_MULT
-            
-        return sl_mult, tp_mult
-
-    def _calculate_sl_tp(self, price: float, atr: float, pair: str = "") -> tuple[float, float]:
-        """
-        Calculate SL and TP distances using standardized ATR settings.
-        SL = 1.5 * ATR (High Probability)
-        TP = 1.5 * ATR (1:1 Risk:Reward for Small Wins)
-        """
-        sl_mult, tp_mult = self._get_sl_tp_multipliers(pair)
-        sl_dist = atr * sl_mult
-        tp_dist = atr * tp_mult
-        return sl_dist, tp_dist
 
     def check_exit(self, curr: pd.Series, trade: dict) -> tuple:
         """
@@ -116,6 +91,9 @@ class RSIStochStrategy:
         uptrend = curr["close"] > curr["ema_trend"]
         downtrend = curr["close"] < curr["ema_trend"]
         
+        # Get dynamic settings for this pair
+        sl_mult, tp_mult = self._get_sl_tp_settings(pair)
+        
         adx = float(curr["adx"])
         
         # Default Settings
@@ -145,7 +123,8 @@ class RSIStochStrategy:
         stoch_cross_up = prev["stoch_k"] < 20 and curr["stoch_k"] > 20
         
         if uptrend and rsi_bull and stoch_cross_up:
-             sl_dist, tp_dist = self._calculate_sl_tp(curr["close"], curr["atr"], pair=pair)
+             sl_dist = curr["atr"] * sl_mult
+             tp_dist = curr["atr"] * tp_mult
              
              sl = curr["close"] - sl_dist
              tp = curr["close"] + tp_dist
@@ -159,7 +138,8 @@ class RSIStochStrategy:
         stoch_cross_down = prev["stoch_k"] > 80 and curr["stoch_k"] < 80
         
         if downtrend and rsi_bear and stoch_cross_down:
-             sl_dist, tp_dist = self._calculate_sl_tp(curr["close"], curr["atr"], pair=pair)
+             sl_dist = curr["atr"] * sl_mult
+             tp_dist = curr["atr"] * tp_mult
              
              sl = curr["close"] + sl_dist
              tp = curr["close"] - tp_dist

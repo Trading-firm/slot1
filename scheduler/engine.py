@@ -180,47 +180,75 @@ class TradingEngine:
             # A. Check Hard SL/TP (Risk Manager)
             should_close, reason, exit_price = self.risk.check_exit(trade, ticker)
             
-            # B. Check for Momentum Fade (Active Monitoring)
+            # B. Check for Momentum Fade & Retracement Protection (Active Monitoring)
             if not should_close and not df.empty:
                 try:
                     current_price = float(ticker.get("last"))
-                    entry_price = float(trade["entry_price"])
-                    tp_price = float(trade["take_profit"])
+                    entry_price   = float(trade["entry_price"])
+                    peak_price    = float(trade.get("peak_price", entry_price))
+                    direction     = trade["direction"]
                     
-                    total_dist = abs(tp_price - entry_price)
-                    current_dist = abs(current_price - entry_price)
-                    progress_pct = (current_dist / total_dist) if total_dist > 0 else 0
-                    
-                    # 1. Check for Breakeven (Move SL to Entry)
-                    if progress_pct >= settings.BREAKEVEN_ARM_PCT:
-                        # Only move if SL isn't already at or better than entry
-                        current_sl = float(trade.get("stop_loss", 0))
-                        if (trade["direction"] == "BUY" and current_sl < entry_price) or \
-                           (trade["direction"] == "SELL" and current_sl > entry_price):
-                            
-                            success = self.broker.update_order_stop_loss(trade.get("broker_order_id"), entry_price)
-                            if success:
-                                TradeRepository.update_trade_sl(trade["_id"], entry_price)
-                                logger.info(f"🛡️ BREAKEVEN: SL moved to entry for {trade['pair']} ({progress_pct*100:.1f}% progress)")
+                    # 1. Update Peak Price (High-Water Mark)
+                    if direction == "BUY":
+                        if current_price > peak_price:
+                            peak_price = current_price
+                            TradeRepository.update_peak_price(trade["_id"], peak_price)
+                    else: # SELL
+                        if current_price < peak_price:
+                            peak_price = current_price
+                            TradeRepository.update_peak_price(trade["_id"], peak_price)
 
-                    # 2. Check for Momentum Fade (Active Monitoring)
-                    if progress_pct >= settings.MOMENTUM_EXIT_ARM_PCT:
-                        strategy = self.strategies_map.get(trade.get("strategy"))
-                        if strategy:
-                            strat_df = strategy.calculate_indicators(df.copy())
-                            curr = strat_df.iloc[-1]
-                            ema20 = curr["ema_20"]
-                            
-                            if trade["direction"] == "BUY":
-                                if current_price < ema20: # Price dropped below EMA 20
-                                    should_close = True
-                                    reason = f"Momentum Exit: Price ({current_price:.5f}) below EMA20 ({ema20:.5f})"
-                            elif trade["direction"] == "SELL":
-                                if current_price > ema20: # Price rose above EMA 20
-                                    should_close = True
-                                    reason = f"Momentum Exit: Price ({current_price:.5f}) above EMA20 ({ema20:.5f})"
+                    # 2. Get Strategy Indicators for EMA/ATR checks
+                    strategy = self.strategies_map.get(trade.get("strategy"))
+                    if strategy:
+                        strat_df = strategy.calculate_indicators(df.copy())
+                        curr = strat_df.iloc[-1]
+                        atr = curr["atr"]
+                        ema20 = curr["ema_20"]
+                        
+                        # 3. Calculate Profit & Retracement
+                        is_in_profit = (direction == "BUY" and current_price > entry_price) or \
+                                       (direction == "SELL" and current_price < entry_price)
+                        
+                        profit_dist = abs(current_price - entry_price)
+                        profit_atr  = profit_dist / atr if atr > 0 else 0
+                        
+                        # Current retracement from peak
+                        retracement_dist = abs(peak_price - current_price)
+                        total_profit_peak = abs(peak_price - entry_price)
+                        
+                        # Retracement % of the peak profit
+                        retracement_pct = (retracement_dist / total_profit_peak) if total_profit_peak > 0 else 0
+
+                        # A. Immediate EMA 20 Protection (User requested: "protective from start")
+                        if settings.ENABLE_IMMEDIATE_EMA_PROTECTION:
+                            if direction == "BUY" and current_price < ema20:
+                                should_close = True
+                                reason = f"🛡️ EMA Protection: Price ({current_price:.5f}) below EMA20 ({ema20:.5f})"
+                            elif direction == "SELL" and current_price > ema20:
+                                should_close = True
+                                reason = f"🛡️ EMA Protection: Price ({current_price:.5f}) above EMA20 ({ema20:.5f})"
+
+                        # B. Quick Breakeven: Move SL to Entry (as soon as we have a small profit)
+                        if not should_close and is_in_profit and profit_atr >= settings.QUICK_BREAKEVEN_ATR:
+                            current_sl = float(trade.get("stop_loss", 0))
+                            if (direction == "BUY" and current_sl < entry_price) or \
+                               (direction == "SELL" and current_sl > entry_price):
+                                
+                                success = self.broker.update_order_stop_loss(trade.get("broker_order_id"), entry_price)
+                                if success:
+                                    TradeRepository.update_trade_sl(trade["_id"], entry_price)
+                                    logger.info(f"🛡️ QUICK BREAKEVEN: SL moved to entry for {trade['pair']} ({profit_atr:.2f} ATR profit)")
+
+                        # C. Retracement Protection (User requested: "keep the profit and wait for it to finish retracing")
+                        # Triggers if we have significant profit (>0.1 ATR) and it retraces >20% from the peak
+                        if not should_close and is_in_profit and profit_atr >= settings.MIN_PROFIT_PROTECT_ATR:
+                            if retracement_pct >= settings.MAX_RETRACEMENT_PCT:
+                                should_close = True
+                                reason = f"💰 Retracement Exit: Profit retraced {retracement_pct*100:.1f}% from peak ({peak_price:.5f})"
+                                
                 except Exception as e:
-                    logger.warning(f"Momentum exit check failed: {e}")
+                    logger.warning(f"Retracement check failed for {trade['pair']}: {e}")
 
             # C. Check Strategy Early Exit (if not already closing)
             if not should_close and not df.empty:

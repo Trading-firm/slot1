@@ -47,10 +47,25 @@ class Settings:
     MAX_OPEN_TRADES: int     = int(os.getenv("MAX_OPEN_TRADES", 0))
     
     # Momentum-Based Active Monitoring
-    # Once trade reaches this percentage of the TP distance, start monitoring closely
+    # Once trade is in profit, start monitoring for momentum fade
     BREAKEVEN_ARM_PCT: float = float(os.getenv("BREAKEVEN_ARM_PCT", 0.50))
-    MOMENTUM_EXIT_ARM_PCT: float = float(os.getenv("MOMENTUM_EXIT_ARM_PCT", 0.70))
+    MOMENTUM_EXIT_ARM_PCT: float = float(os.getenv("MOMENTUM_EXIT_ARM_PCT", 0.0)) # 0% means from start
     MOMENTUM_EXIT_EMA_REVERSAL: bool = os.getenv("MOMENTUM_EXIT_EMA_REVERSAL", "true").lower() == "true"
+    
+    # Minimum profit (in ATR units) before retracement protection triggers
+    # This prevents closing too early on minor noise right after entry
+    MIN_PROFIT_PROTECT_ATR: float = float(os.getenv("MIN_PROFIT_PROTECT_ATR", 0.1))
+    
+    # Quick Breakeven: Move SL to entry as soon as we have a small profit
+    QUICK_BREAKEVEN_ATR: float = float(os.getenv("QUICK_BREAKEVEN_ATR", 0.5))
+    
+    # Retracement Protection: Close if price drops X% of the profit made
+    # For example, if we made $100 profit and it retraces $20 (20%), close.
+    MAX_RETRACEMENT_PCT: float = float(os.getenv("MAX_RETRACEMENT_PCT", 0.20))
+    
+    # Immediate Momentum Protection: Close if price crosses EMA 20
+    # User requested: "Immediately there's a live trade, it should be protective from start."
+    ENABLE_IMMEDIATE_EMA_PROTECTION: bool = os.getenv("ENABLE_IMMEDIATE_EMA_PROTECTION", "true").lower() == "true"
 
     # Strategic Stop Loss placement (ATR Buffer)
     ATR_MULTIPLIER_SL: float = float(os.getenv("ATR_MULTIPLIER_SL", 1.5))

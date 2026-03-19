@@ -200,20 +200,19 @@ class TrendFollowingStrategy(BaseStrategy):
             return SignalResult(signal="NONE", pair=pair, close=0, ema_20=0, ema_50=0, ema_200=0, rsi=0, adx=0, atr=0, reason=str(e))
 
     def check_exit(self, curr: pd.Series, trade: dict) -> tuple[bool, str]:
-        """Check for strategy-based exit (Trend Reversal)."""
+        """Check for strategy-based exit (Trend Reversal or Momentum Loss)."""
         close = curr["close"]
         ema20 = curr["ema_20"]
-        ema50 = curr["ema_50"]
         
         direction = trade.get("direction")
         
         if direction == "BUY":
-            # Exit if price drops below EMA 50 or EMA 20 crosses below EMA 50
-            if close < ema50 or ema20 < ema50:
-                return True, "Bullish Trend Weakened/Reversed"
+            # Exit immediately if price drops below EMA 20 (Immediate Momentum Loss)
+            if close < ema20:
+                return True, f"Momentum Loss (Price {close:.5f} < EMA20 {ema20:.5f})"
         elif direction == "SELL":
-            # Exit if price rises above EMA 50 or EMA 20 crosses above EMA 50
-            if close > ema50 or ema20 > ema50:
-                return True, "Bearish Trend Weakened/Reversed"
+            # Exit immediately if price rises above EMA 20 (Immediate Momentum Loss)
+            if close > ema20:
+                return True, f"Momentum Loss (Price {close:.5f} > EMA20 {ema20:.5f})"
                 
         return False, ""

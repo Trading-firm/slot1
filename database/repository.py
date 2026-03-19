@@ -43,6 +43,7 @@ class TradeRepository:
             "timeframe":   timeframe,
             "strategy":    strategy,
             "status":      "OPEN",
+            "peak_price":  entry_price, # Start with entry price as initial peak
             "exit_pending_count": 0,
             "exit_pending_reason": None,
             "exit_price":  None,
@@ -139,6 +140,16 @@ class TradeRepository:
         trades_col().update_one(
             {"_id": trade_id, "status": "OPEN"},
             {"$set": {"exit_pending_count": 0, "exit_pending_reason": None}},
+        )
+
+    @staticmethod
+    def update_peak_price(trade_id, new_peak: float):
+        if isinstance(trade_id, str):
+            trade_id = ObjectId(trade_id)
+
+        trades_col().update_one(
+            {"_id": trade_id, "status": "OPEN"},
+            {"$set": {"peak_price": new_peak}}
         )
 
     @staticmethod

@@ -13,19 +13,7 @@ Orchestrates the full cycle:
 
 from dataclasses import asdict, is_dataclass
 from broker.connector import ForexBroker
-from strategies.ema_rsi import EMARSIStrategy
-from strategies.bollinger_breakout import BollingerBreakoutStrategy
-from strategies.mean_reversion import MeanReversionStrategy
-from strategies.macd_cross import MACDCrossStrategy
-from strategies.stochastic_oscillator import StochasticStrategy
-from strategies.atr_breakout import ATRBreakoutStrategy
-from strategies.sma_crossover import SMACrossoverStrategy
-from strategies.cci_trend import CCITrendStrategy
-from strategies.parabolic_sar import ParabolicSARStrategy
-from strategies.rsi_stoch import RSIStochStrategy
-from strategies.support_resistance import SupportResistanceStrategy
-from strategies.candlestick_pattern import CandlestickPatternStrategy
-from strategies.fvg_strategy import FVGStrategy
+from strategies.trend_following import TrendFollowingStrategy
 from utils.risk_manager import RiskManager
 from database.models import init_db
 from database.repository import (
@@ -47,21 +35,9 @@ class TradingEngine:
         init_db()
         self.broker   = ForexBroker()
         
-        # Initialize all strategies
+        # Initialize Trend Following strategy
         self.strategies_map = {
-            "ema_rsi": EMARSIStrategy(),
-            "bollinger_breakout": BollingerBreakoutStrategy(),
-            "mean_reversion": MeanReversionStrategy(),
-            "macd_cross": MACDCrossStrategy(),
-            "stochastic": StochasticStrategy(),
-            "atr_breakout": ATRBreakoutStrategy(),
-            "sma_crossover": SMACrossoverStrategy(),
-            "cci_trend": CCITrendStrategy(),
-            "parabolic_sar": ParabolicSARStrategy(),
-            "rsi_stoch": RSIStochStrategy(),
-            "support_resistance": SupportResistanceStrategy(),
-            "candlestick_pattern": CandlestickPatternStrategy(),
-            "fvg": FVGStrategy()
+            "trend_following": TrendFollowingStrategy()
         }
         
         self.risk     = RiskManager()
@@ -636,6 +612,15 @@ class TradingEngine:
             logger.warning(f"[{pair}] Invalid entry/SL/TP values — trade skipped.")
             return None, "Invalid entry/SL/TP values"
 
+        # ─── 1:3 Reward Ratio Check ───
+        # Ensure the actual Reward is at least 2.5x the Risk (allowing for spread)
+        if sl_distance > 0:
+            reward_dist = abs(tp - entry)
+            actual_rr = reward_dist / sl_distance
+            if actual_rr < 2.5:
+                logger.warning(f"[{pair}] R:R ratio too low ({actual_rr:.1f} < 2.5). Skipping.")
+                return None, f"R:R too low ({actual_rr:.1f})"
+
         if signal.signal == "BUY":
             if not (sl < entry < tp):
                 logger.warning(f"[{pair}] Invalid SL/TP for BUY — trade skipped.")
@@ -646,20 +631,21 @@ class TradingEngine:
                 return None, "Invalid SL/TP (tp < entry < sl failed)"
 
         # Check for Achievable TP (Double check entry)
+        # Increased to 10x ATR to accommodate the 1:3 ratio with wider SL
         atr = getattr(signal, "atr", None)
         if atr and atr > 0:
              tp_dist = abs(entry - tp)
-             if tp_dist > (4.0 * atr):
-                  logger.warning(f"[{pair}] TP distance {tp_dist:.5f} is > 4x ATR ({atr:.5f}). Too far/unachievable. Skipping.")
-                  return None, "TP > 4x ATR (Too Far)"
+             if tp_dist > (10.0 * atr):
+                  logger.warning(f"[{pair}] TP distance {tp_dist:.5f} is > 10x ATR ({atr:.5f}). Too far/unachievable. Skipping.")
+                  return None, "TP > 10x ATR (Too Far)"
 
         # Ensure TP is not too close (Minimum Distance Check)
         if atr and atr > 0:
              tp_dist = abs(entry - tp)
-             min_tp_dist = 0.5 * atr
+             min_tp_dist = 1.0 * atr # Increased for 1:3 logic
              if tp_dist < min_tp_dist:
-                  logger.warning(f"[{pair}] TP distance {tp_dist:.5f} is < 0.5x ATR ({min_tp_dist:.5f}). Too close/not worth risk. Skipping.")
-                  return None, "TP < 0.5x ATR (Too Close)"
+                  logger.warning(f"[{pair}] TP distance {tp_dist:.5f} is > 1.0x ATR ({min_tp_dist:.5f}). Too close/not worth risk. Skipping.")
+                  return None, "TP < 1.0x ATR (Too Close)"
 
 
         quantity    = self.broker.calculate_quantity(

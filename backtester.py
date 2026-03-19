@@ -7,19 +7,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 # Import Strategies
-from strategies.macd_cross import MACDCrossStrategy
-from strategies.cci_trend import CCITrendStrategy
-from strategies.rsi_stoch import RSIStochStrategy
-from strategies.stochastic_oscillator import StochasticStrategy
-from strategies.parabolic_sar import ParabolicSARStrategy
-from strategies.support_resistance import SupportResistanceStrategy
-from strategies.candlestick_pattern import CandlestickPatternStrategy
-from strategies.atr_breakout import ATRBreakoutStrategy
-from strategies.bollinger_breakout import BollingerBreakoutStrategy
-from strategies.ema_rsi import EMARSIStrategy
-from strategies.mean_reversion import MeanReversionStrategy
-from strategies.sma_crossover import SMACrossoverStrategy
-from strategies.fvg_strategy import FVGStrategy
+from strategies.trend_following import TrendFollowingStrategy
 
 class Backtester:
     def __init__(self, symbol, timeframe, timeframe_name="1h"):
@@ -32,19 +20,7 @@ class Backtester:
     def _init_strategies(self):
         """Initialize all available strategies."""
         return {
-            "MACD Cross": MACDCrossStrategy(),
-            "CCI Trend": CCITrendStrategy(),
-            "RSI + Stoch": RSIStochStrategy(),
-            "Stochastic": StochasticStrategy(),
-            "Parabolic SAR": ParabolicSARStrategy(),
-            "Support & Resistance": SupportResistanceStrategy(tolerance_pct=0.005),
-            "Candlestick Pattern": CandlestickPatternStrategy(),
-            "ATR Breakout": ATRBreakoutStrategy(),
-            "Bollinger Breakout": BollingerBreakoutStrategy(),
-            "EMA + RSI": EMARSIStrategy(),
-            "Mean Reversion": MeanReversionStrategy(),
-            "SMA Crossover": SMACrossoverStrategy(),
-            "FVG": FVGStrategy()
+            "Strong Trend Following": TrendFollowingStrategy()
         }
 
     def get_data(self, n=5000):

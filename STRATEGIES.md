@@ -1,55 +1,39 @@
 # Trading Strategies
 
-This bot supports multiple trading strategies designed for different market conditions.
+The bot is currently configured to use a single, high-conviction strategy focused on **Strong Trend Following**.
 
-## 1. EMA Crossover + RSI (Trend Following)
-**Best for:** Strong trending markets (Forex majors, Trending Volatility Indices).
+## 1. Strong Trend Following Strategy
+**Best for:** Strongly trending markets (Forex majors, Volatility Indices).
 **Logic:**
-- **Entry:** Fast EMA (9) crosses Slow EMA (21).
-- **Confirmation:**
-  - **RSI:** Must be > 55 (Buy) or < 45 (Sell) to confirm momentum.
-  - **Trend Filter:** Price must be above EMA 200 (Buy) or below EMA 200 (Sell).
-  - **ADX:** Trend strength must be > 25.
-- **Exit:** Fixed SL/TP based on ATR.
+- **Entry (BUY):**
+  - **Trend Alignment:** EMA(20) > EMA(50) > EMA(200).
+  - **Price Position:** Current price is above EMA(20).
+  - **Trend Strength:** ADX(14) > 25 (confirming a strong trend).
+  - **Momentum:** RSI(14) > 50 (bullish momentum).
+- **Entry (SELL):**
+  - **Trend Alignment:** EMA(20) < EMA(50) < EMA(200).
+  - **Price Position:** Current price is below EMA(20).
+  - **Trend Strength:** ADX(14) > 25 (confirming a strong trend).
+  - **Momentum:** RSI(14) < 50 (bearish momentum).
 
-## 2. Bollinger Breakout (Volatility Breakout)
-**Best for:** Explosive moves after consolidation (Volatility Indices).
-**Logic:**
-- **Entry:** Price breaks above Upper Bollinger Band (Buy) or below Lower Bollinger Band (Sell).
-- **Confirmation:**
-  - **Bandwidth Expansion:** The bands must be widening (Bandwidth > 20-period average), indicating increasing volatility.
-- **Exit:**
-  - **SL:** ATR-based (e.g., 2.0x ATR).
-  - **TP:** ATR-based (e.g., 4.0x ATR).
+- **Risk Management:**
+  - **Stop Loss:** ATR-based (default 1.5x ATR).
+  - **Take Profit:** ATR-based (default 1.0x ATR).
+  - **Asset Specifics:** Custom SL/TP multipliers for Volatility 10, 25, and 75 Indices.
 
-## 3. Mean Reversion (Bollinger + RSI)
-**Best for:** Ranging/Choppy markets (Low ADX).
-**Logic:**
-- **Entry:** Price touches Lower Band (Buy) or Upper Band (Sell).
-- **Confirmation:**
-  - **RSI:** Must be Oversold < 30 (Buy) or Overbought > 70 (Sell).
-  - **Market Condition:** ADX must be < 25 (confirming no strong trend).
-- **Exit:**
-  - **TP:** Middle Bollinger Band (Mean).
-  - **SL:** Distance to opposite band or calculated risk.
+- **Exit (Strategy-Based):**
+  - **Reversal:** The trade is closed if the trend weakens (e.g., price crosses EMA 50 or EMA 20 crosses EMA 50).
 
-## 4. Optimization Results & Configuration
+## 2. Configuration
+The strategy is managed via `config/settings.py`. All other strategies have been removed to ensure focus on strong trends and minimize losses from choppy market conditions.
 
-Based on backtesting optimization (March 2026), the following strategies are assigned to each Volatility Index for maximum profitability:
+- **Default Timeframe:** 1h
+- **Confluence:** Disabled (Single strategy mode)
+- **ADX Threshold:** 25.0
 
-| Index | Strategy | Timeframe | Notes |
-|-------|----------|-----------|-------|
-| **Vol 10** | Bollinger Breakout | 1h | Best performer |
-| **Vol 25** | Bollinger Breakout | 1h | **Highest Profit (38%+)** |
-| **Vol 50** | Bollinger Breakout | 15m | Strong breakout performance |
-| **Vol 75** | Bollinger Breakout | 15m | Consistent winner |
-| **Vol 100** | Mean Reversion | 1h | Ranging behavior detected |
-
-These mappings are configured in `config/settings.py` and applied automatically by the trading engine.
-
-## 5. Running Backtests
-Run the optimization script to test all strategies on all Volatility indices:
+## 3. Running Backtests
+To verify the performance of the Strong Trend Following strategy:
 ```bash
-python optimize_volatility.py
+python main.py backtest
 ```
-This will output a summary table showing which strategy works best for each index.
+This will run the strategy against the configured trading pairs using historical data.

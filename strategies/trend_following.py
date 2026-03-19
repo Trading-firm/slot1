@@ -148,14 +148,14 @@ class TrendFollowingStrategy(BaseStrategy):
             # Calculate SL/TP if signal
             sl, tp = None, None
             if signal != "NONE":
-                # ─── New 1:3 Logic ──────────────────────────────────────────
+                # ─── Strategic SL & Flexible TP Logic ──────────────────────
                 # SL: Recent High/Low + ATR Buffer for "Breathing Room"
                 # This ensures the SL is placed where a trend break is confirmed.
                 
                 atr_buffer = atr * settings.ATR_MULTIPLIER_SL
                 
                 if signal == "BUY":
-                    # Recent Low over the last 20 candles
+                    # Strategic SL: Recent Low (20 candles)
                     recent_low = recent_data["low"].min()
                     sl = recent_low - atr_buffer
                     
@@ -164,12 +164,11 @@ class TrendFollowingStrategy(BaseStrategy):
                     min_sl = close - (atr * 0.5)
                     sl = max(min(sl, min_sl), max_sl)
                     
-                    # TP = Entry + (Distance to SL * Reward Ratio)
-                    sl_dist = close - sl
-                    tp = close + (sl_dist * settings.REWARD_RATIO)
+                    # TP: Target 5x ATR for a wider run, but we will monitor momentum
+                    tp = close + (atr * settings.ATR_MULTIPLIER_TP)
                     
                 else: # SELL
-                    # Recent High over the last 20 candles
+                    # Strategic SL: Recent High (20 candles)
                     recent_high = recent_data["high"].max()
                     sl = recent_high + atr_buffer
                     
@@ -178,9 +177,8 @@ class TrendFollowingStrategy(BaseStrategy):
                     min_sl = close + (atr * 0.5)
                     sl = min(max(sl, min_sl), max_sl)
                     
-                    # TP = Entry - (Distance to SL * Reward Ratio)
-                    sl_dist = sl - close
-                    tp = close - (sl_dist * settings.REWARD_RATIO)
+                    # TP: Target 5x ATR for a wider run, but we will monitor momentum
+                    tp = close - (atr * settings.ATR_MULTIPLIER_TP)
 
             return SignalResult(
                 signal=signal,

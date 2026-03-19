@@ -180,7 +180,49 @@ class TradingEngine:
             # A. Check Hard SL/TP (Risk Manager)
             should_close, reason, exit_price = self.risk.check_exit(trade, ticker)
             
-            # B. Check Strategy Early Exit (if not already closing due to SL/TP)
+            # B. Check for Momentum Fade (Active Monitoring)
+            if not should_close and not df.empty:
+                try:
+                    current_price = float(ticker.get("last"))
+                    entry_price = float(trade["entry_price"])
+                    tp_price = float(trade["take_profit"])
+                    
+                    total_dist = abs(tp_price - entry_price)
+                    current_dist = abs(current_price - entry_price)
+                    progress_pct = (current_dist / total_dist) if total_dist > 0 else 0
+                    
+                    # 1. Check for Breakeven (Move SL to Entry)
+                    if progress_pct >= settings.BREAKEVEN_ARM_PCT:
+                        # Only move if SL isn't already at or better than entry
+                        current_sl = float(trade.get("stop_loss", 0))
+                        if (trade["direction"] == "BUY" and current_sl < entry_price) or \
+                           (trade["direction"] == "SELL" and current_sl > entry_price):
+                            
+                            success = self.broker.update_order_stop_loss(trade.get("broker_order_id"), entry_price)
+                            if success:
+                                TradeRepository.update_trade_sl(trade["_id"], entry_price)
+                                logger.info(f"🛡️ BREAKEVEN: SL moved to entry for {trade['pair']} ({progress_pct*100:.1f}% progress)")
+
+                    # 2. Check for Momentum Fade (Active Monitoring)
+                    if progress_pct >= settings.MOMENTUM_EXIT_ARM_PCT:
+                        strategy = self.strategies_map.get(trade.get("strategy"))
+                        if strategy:
+                            strat_df = strategy.calculate_indicators(df.copy())
+                            curr = strat_df.iloc[-1]
+                            ema20 = curr["ema_20"]
+                            
+                            if trade["direction"] == "BUY":
+                                if current_price < ema20: # Price dropped below EMA 20
+                                    should_close = True
+                                    reason = f"Momentum Exit: Price ({current_price:.5f}) below EMA20 ({ema20:.5f})"
+                            elif trade["direction"] == "SELL":
+                                if current_price > ema20: # Price rose above EMA 20
+                                    should_close = True
+                                    reason = f"Momentum Exit: Price ({current_price:.5f}) above EMA20 ({ema20:.5f})"
+                except Exception as e:
+                    logger.warning(f"Momentum exit check failed: {e}")
+
+            # C. Check Strategy Early Exit (if not already closing)
             if not should_close and not df.empty:
                 strat_name = trade.get("strategy")
                 strategy   = self.strategies_map.get(strat_name)
@@ -612,40 +654,22 @@ class TradingEngine:
             logger.warning(f"[{pair}] Invalid entry/SL/TP values — trade skipped.")
             return None, "Invalid entry/SL/TP values"
 
-        # ─── 1:3 Reward Ratio Check ───
-        # Ensure the actual Reward is at least 2.5x the Risk (allowing for spread)
-        if sl_distance > 0:
-            reward_dist = abs(tp - entry)
-            actual_rr = reward_dist / sl_distance
-            if actual_rr < 2.5:
-                logger.warning(f"[{pair}] R:R ratio too low ({actual_rr:.1f} < 2.5). Skipping.")
-                return None, f"R:R too low ({actual_rr:.1f})"
-
-        if signal.signal == "BUY":
-            if not (sl < entry < tp):
-                logger.warning(f"[{pair}] Invalid SL/TP for BUY — trade skipped.")
-                return None, "Invalid SL/TP (sl < entry < tp failed)"
-        elif signal.signal == "SELL":
-            if not (tp < entry < sl):
-                logger.warning(f"[{pair}] Invalid SL/TP for SELL — trade skipped.")
-                return None, "Invalid SL/TP (tp < entry < sl failed)"
-
         # Check for Achievable TP (Double check entry)
-        # Increased to 10x ATR to accommodate the 1:3 ratio with wider SL
+        # 10x ATR is our safety limit for a TP target
         atr = getattr(signal, "atr", None)
         if atr and atr > 0:
              tp_dist = abs(entry - tp)
              if tp_dist > (10.0 * atr):
-                  logger.warning(f"[{pair}] TP distance {tp_dist:.5f} is > 10x ATR ({atr:.5f}). Too far/unachievable. Skipping.")
+                  logger.warning(f"[{pair}] TP distance {tp_dist:.5f} is > 10x ATR ({atr:.5f}). Too far. Skipping.")
                   return None, "TP > 10x ATR (Too Far)"
 
         # Ensure TP is not too close (Minimum Distance Check)
         if atr and atr > 0:
              tp_dist = abs(entry - tp)
-             min_tp_dist = 1.0 * atr # Increased for 1:3 logic
+             min_tp_dist = 0.5 * atr 
              if tp_dist < min_tp_dist:
-                  logger.warning(f"[{pair}] TP distance {tp_dist:.5f} is > 1.0x ATR ({min_tp_dist:.5f}). Too close/not worth risk. Skipping.")
-                  return None, "TP < 1.0x ATR (Too Close)"
+                  logger.warning(f"[{pair}] TP distance {tp_dist:.5f} is < 0.5x ATR ({min_tp_dist:.5f}). Too close. Skipping.")
+                  return None, "TP < 0.5x ATR (Too Close)"
 
 
         quantity    = self.broker.calculate_quantity(

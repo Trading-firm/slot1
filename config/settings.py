@@ -44,15 +44,18 @@ class Settings:
 
     # ─── Risk Management ──────────────────────────────────
     RISK_PER_TRADE: float    = float(os.getenv("RISK_PER_TRADE", 0.01))
-    # Set to 0 to disable the global limit (allows all pairs to trigger if they have a valid signal)
     MAX_OPEN_TRADES: int     = int(os.getenv("MAX_OPEN_TRADES", 0))
     
-    # 1:3 Reward Ratio
-    REWARD_RATIO: float = float(os.getenv("REWARD_RATIO", 3.0))
+    # Momentum-Based Active Monitoring
+    # Once trade reaches this percentage of the TP distance, start monitoring closely
+    BREAKEVEN_ARM_PCT: float = float(os.getenv("BREAKEVEN_ARM_PCT", 0.50))
+    MOMENTUM_EXIT_ARM_PCT: float = float(os.getenv("MOMENTUM_EXIT_ARM_PCT", 0.70))
+    MOMENTUM_EXIT_EMA_REVERSAL: bool = os.getenv("MOMENTUM_EXIT_EMA_REVERSAL", "true").lower() == "true"
 
-    # ATR Multipliers for "Breathing Room"
+    # Strategic Stop Loss placement (ATR Buffer)
     ATR_MULTIPLIER_SL: float = float(os.getenv("ATR_MULTIPLIER_SL", 1.5))
-    ATR_MULTIPLIER_TP: float = float(os.getenv("ATR_MULTIPLIER_TP", 4.5))
+    # Flexible TP (Wider target, but active exit)
+    ATR_MULTIPLIER_TP: float = float(os.getenv("ATR_MULTIPLIER_TP", 5.0))
 
     # Maximum allowable SL distance in % (to prevent huge drawdowns)
     MAX_SL_DISTANCE_PCT: float = float(os.getenv("MAX_SL_DISTANCE_PCT", 0.05))
@@ -61,7 +64,7 @@ class Settings:
     SL_PCT_FOREX: float   = float(os.getenv("SL_PCT_FOREX", 0.002))
     SL_PCT_INDICES: float = float(os.getenv("SL_PCT_INDICES", 0.01))
 
-    # TP Settings (Calculated as SL_Dist * REWARD_RATIO)
+    # TP Settings (Calculated as SL_Dist * REWARD_RATIO or Fixed ATR)
     TP_MIN_PCT: float = float(os.getenv("TP_MIN_PCT", 0.003))
     TP_MAX_PCT: float = float(os.getenv("TP_MAX_PCT", 0.15))
     
@@ -71,7 +74,8 @@ class Settings:
     
     # Standard ATR Multiplier for legacy support
     STANDARD_SL_ATR: float = float(os.getenv("STANDARD_SL_ATR", 1.5))
-    RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD_RATIO", 3.0))
+    RISK_REWARD_RATIO: float = float(os.getenv("RISK_REWARD_RATIO", 2.0))
+    REWARD_RATIO: float = float(os.getenv("REWARD_RATIO", 2.0))
 
     # Volatility 25 Index Specific Settings
     VOL25_SL_ATR_MULT: float = float(os.getenv("VOL25_SL_ATR_MULT", 1.2))

@@ -20,9 +20,10 @@ from datetime import datetime
 class RiskManager:
 
     def __init__(self):
-        self.max_open_trades = settings.MAX_OPEN_TRADES
-        self.max_daily_loss  = settings.MAX_DAILY_LOSS
-        self.risk_per_trade  = settings.RISK_PER_TRADE
+        self.max_open_trades    = settings.MAX_OPEN_TRADES
+        self.max_daily_loss_pct = settings.MAX_DAILY_LOSS
+        self.max_daily_loss_usd = settings.MAX_DAILY_LOSS_USD
+        self.risk_per_trade     = settings.RISK_PER_TRADE
 
     def can_trade(self, pair: str, balance: float, strategy: str = None) -> tuple:
         """
@@ -58,11 +59,12 @@ class RiskManager:
             BotStateRepository.set(today_key, f"{start_balance}")
 
         daily_pnl = float(balance) - float(start_balance)
-        max_loss_amount = float(getattr(settings, "MAX_DAILY_LOSS_USD", 0.0) or 0.0)
-        if max_loss_amount > 0:
-            max_loss = -max_loss_amount
+        
+        # Determine Max Loss Amount (Priority: USD amount > Percentage)
+        if self.max_daily_loss_usd > 0:
+            max_loss = -self.max_daily_loss_usd
         else:
-            max_loss = -(float(start_balance) * float(self.max_daily_loss))
+            max_loss = -(float(start_balance) * float(self.max_daily_loss_pct))
         
         metrics["daily_pnl"] = daily_pnl
         metrics["max_daily_loss"] = abs(max_loss)
@@ -169,11 +171,12 @@ class RiskManager:
             BotStateRepository.set(today_key, f"{start_balance}")
 
         daily_pnl = float(balance) - float(start_balance)
-        max_loss_amount = float(getattr(settings, "MAX_DAILY_LOSS_USD", 0.0) or 0.0)
-        if max_loss_amount > 0:
-            max_loss = max_loss_amount
+        
+        # Determine Max Loss Amount (Priority: USD amount > Percentage)
+        if self.max_daily_loss_usd > 0:
+            max_loss = self.max_daily_loss_usd
         else:
-            max_loss = float(start_balance) * float(self.max_daily_loss)
+            max_loss = float(start_balance) * float(self.max_daily_loss_pct)
 
         logger.info(
             f"Risk Summary | Open: {open_count}/{self.max_open_trades} | "

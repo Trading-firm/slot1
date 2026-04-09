@@ -116,7 +116,7 @@ MARKETS = {
         },
         "max_sl_atr":   2.5,
         "swing_window": 10,
-        "min_lot":      0.001,      # Vol75 min lot is 0.001
+        "min_lot":      0.01,      # Vol75 min lot is 0.001
         "atr_period":   14,
     },
 

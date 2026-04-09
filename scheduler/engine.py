@@ -7,7 +7,7 @@ Main trading engine.
 from broker.mt5_connector import (
     connect, disconnect, get_balance, fetch_candles,
     get_open_positions, place_order,
-    calculate_lot_size, get_symbol_info,
+    get_symbol_info,
 )
 from strategies.signal_engine import generate_signal
 from risk.manager import RiskManager
@@ -284,37 +284,17 @@ class TradingEngine:
             return
 
         # ─── Position Sizing ──────────────────────────────
-        sl_distance = abs(signal.close - signal.sl)
+        # Use the market's minimum lot size as a static fixed lot per order.
+        # Each TP order gets exactly min_lot — increase min_lot in markets.py to scale up.
         sym_info    = get_symbol_info(symbol)
-
         sym_min_lot = cfg.get("min_lot")
         if sym_min_lot is None:
             sym_min_lot = sym_info.volume_min if sym_info else settings.MIN_LOT_SIZE
 
-        lot_size = calculate_lot_size(
-            symbol      = symbol,
-            balance     = balance,
-            risk_pct    = settings.RISK_PER_TRADE,
-            sl_distance = sl_distance,
-        )
-        lot_size = self.risk.validate_lot(lot_size, sym_min_lot)
+        lot_part = sym_min_lot
 
-        # ─── Scaling-Out: Split into up to 3 orders ───────
-        # Only split if each part stays at or above the broker minimum.
-        # If not, place a single order at the best TP to avoid tripling risk.
-        lot_part = lot_size / 3.0
-
-        if lot_part < sym_min_lot:
-            # Lot too small to split — single order, aim for best TP
-            tps       = [signal.tp3]
-            lot_part  = lot_size
-            logger.warning(
-                f"[{symbol}] Lot too small to split into 3 "
-                f"(need {sym_min_lot * 3:.4f}, have {lot_size:.4f}). "
-                f"Placing 1 order at TP3."
-            )
-        else:
-            tps = [signal.tp1, signal.tp2, signal.tp3]
+        # ─── Scaling-Out: 3 separate orders at min_lot each ───────
+        tps = [signal.tp1, signal.tp2, signal.tp3]
 
         logger.info(
             f"[{symbol}] Placing {len(tps)} order(s) | "

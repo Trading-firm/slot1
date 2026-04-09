@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Logs
+logs/
+*.log
+unified_bot.log
+# Databases (if any local)
+*.db
+*.sqlite3
+
+# OS generated files
+.DS_Store
+Thumbs.db
+.claude

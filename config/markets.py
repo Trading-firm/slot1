@@ -282,7 +282,7 @@ MARKETS = {
         },
         "max_sl_atr":   2.5,
         "swing_window": 10,
-        "min_lot":      0.01,
+        "min_lot":      0.5,    # Deriv actual minimum (verified from MT5)
         "atr_period":   14,
     },
 
@@ -308,7 +308,7 @@ MARKETS = {
         },
         "max_sl_atr":   2.5,
         "swing_window": 10,
-        "min_lot":      0.01,
+        "min_lot":      200.0,  # Deriv actual minimum (verified from MT5)
         "atr_period":   14,
     },
 }

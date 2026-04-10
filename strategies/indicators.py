@@ -3,6 +3,7 @@ strategies/indicators.py
 ─────────────────────────
 All technical indicators used across strategies.
 """
+
 import pandas as pd
 import numpy as np
 

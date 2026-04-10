@@ -139,23 +139,23 @@ class TradeRepo:
             trades_col()
             .where(filter=FieldFilter("symbol", "==", symbol))
             .where(filter=FieldFilter("status", "==", "CLOSED"))
-            .order_by("exit_time", direction=fs.Query.DESCENDING)
-            .limit(1)
             .stream()
         )
         results = [s.to_dict() for s in docs]
-        return results[0] if results else None
+        if not results:
+            return None
+        return max(results, key=lambda x: x.get("exit_time") or datetime.min)
 
     @staticmethod
     def get_recent_trades(limit: int = 20) -> List[dict]:
         docs = (
             trades_col()
             .where(filter=FieldFilter("status", "==", "CLOSED"))
-            .order_by("exit_time", direction=fs.Query.DESCENDING)
-            .limit(limit)
             .stream()
         )
-        return [s.to_dict() for s in docs]
+        results = [s.to_dict() for s in docs]
+        results.sort(key=lambda x: x.get("exit_time") or datetime.min, reverse=True)
+        return results[:limit]
 
 
 # ═══════════════════════════════════════════════════════════

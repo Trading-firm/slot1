@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="google")
+
 """
 database/firebase.py
 ─────────────────────

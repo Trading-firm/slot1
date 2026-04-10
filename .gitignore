@@ -23,3 +23,6 @@ unified_bot.log
 .DS_Store
 Thumbs.db
 .claude
+# Firebase — never commit credentials
+firebase-credentials.json
+*-credentials.json

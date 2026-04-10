@@ -11,7 +11,7 @@ from broker.mt5_connector import (
 )
 from strategies.signal_engine import generate_signal
 from risk.manager import RiskManager
-from database.mongo import init_db
+from database.firebase import init_db
 from database.repository import TradeRepo, SummaryRepo, StateRepo
 from config.markets import MARKETS
 from config.settings import settings

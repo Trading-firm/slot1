@@ -43,7 +43,7 @@ def run():
 
 
 def status():
-    from database.mongo import init_db
+    from database.firebase import init_db
     from database.repository import TradeRepo, SummaryRepo, PerfRepo
     from broker.mt5_connector import connect, get_balance, disconnect
 

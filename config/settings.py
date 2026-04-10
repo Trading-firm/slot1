@@ -13,9 +13,8 @@ class Settings:
     MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
     MT5_SERVER   = os.getenv("MT5_SERVER", "Deriv-Demo")
 
-    # ─── MongoDB ─────────────────────────────────────────
-    MONGO_URI     = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-    MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "unified_bot")
+    # ─── Firebase ────────────────────────────────────────
+    FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS", "firebase-credentials.json")
 
     # ─── Risk Management ─────────────────────────────────
     RISK_PER_TRADE    = float(os.getenv("RISK_PER_TRADE",    0.01))  # 1% per trade

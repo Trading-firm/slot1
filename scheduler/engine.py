@@ -16,7 +16,7 @@ from database.repository import TradeRepo, SummaryRepo, StateRepo
 from config.markets import MARKETS
 from config.settings import settings
 from utils.logger import logger
-from datetime import datetime
+from datetime import datetime, timezone
 import MetaTrader5 as mt5
 
 
@@ -34,7 +34,7 @@ class TradingEngine:
 
     def run_cycle(self):
         logger.info("=" * 70)
-        logger.info(f"CYCLE START | {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        logger.info(f"CYCLE START | {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
         logger.info("=" * 70)
 
         if not connect():
@@ -48,7 +48,7 @@ class TradingEngine:
                 return
 
             self.risk.print_status(balance)
-            StateRepo.set("last_cycle", datetime.utcnow().isoformat())
+            StateRepo.set("last_cycle", datetime.now(timezone.utc).isoformat())
             StateRepo.set("balance",    str(round(balance, 2)))
 
             self._sync_positions()

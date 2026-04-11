@@ -12,7 +12,7 @@ Rules enforced:
   5. TP bias to favour hitting TP over SL
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from config.settings import settings
 from database.repository import TradeRepo
 from utils.logger import logger
@@ -65,7 +65,7 @@ class RiskManager:
             if all_losses:
                 last_exit = max(t["exit_time"] for t in recent_trades if t.get("exit_time"))
                 wait_until = last_exit + timedelta(hours=4)
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 if now < wait_until:
                     diff = wait_until - now
                     hours_left = round(diff.total_seconds() / 3600, 1)
@@ -91,7 +91,7 @@ class RiskManager:
                 
             wait_until    = exit_time + timedelta(minutes=cooldown_mins)
             
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             if now < wait_until:
                 diff = wait_until - now
                 mins_left = round(diff.total_seconds() / 60)

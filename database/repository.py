@@ -11,7 +11,7 @@ Firestore collections:
   market_performance — per-market win rate tracking    (doc ID = symbol)
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, List
 from firebase_admin import firestore as fs
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -59,7 +59,7 @@ class TradeRepo:
             "exit_reason":  None,
             "pnl":          None,
             "pnl_pct":      None,
-            "entry_time":   datetime.utcnow(),
+            "entry_time":   datetime.now(timezone.utc),
             "exit_time":    None,
         }
         trades_col().document(str(ticket)).set(doc)
@@ -88,7 +88,7 @@ class TradeRepo:
             "exit_reason": exit_reason,
             "pnl":         pnl,
             "pnl_pct":     pnl_pct,
-            "exit_time":   datetime.utcnow(),
+            "exit_time":   datetime.now(timezone.utc),
         }
         ref.update(updates)
 
@@ -119,7 +119,7 @@ class TradeRepo:
 
     @staticmethod
     def get_trades_today() -> List[dict]:
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         docs = trades_col().where(filter=FieldFilter("entry_time", ">=", today)).stream()
         return [s.to_dict() for s in docs]
 
@@ -144,7 +144,7 @@ class TradeRepo:
         results = [s.to_dict() for s in docs]
         if not results:
             return None
-        return max(results, key=lambda x: x.get("exit_time") or datetime.min)
+        return max(results, key=lambda x: x.get("exit_time") or datetime.min.replace(tzinfo=timezone.utc))
 
     @staticmethod
     def get_recent_trades(limit: int = 20) -> List[dict]:
@@ -154,7 +154,7 @@ class TradeRepo:
             .stream()
         )
         results = [s.to_dict() for s in docs]
-        results.sort(key=lambda x: x.get("exit_time") or datetime.min, reverse=True)
+        results.sort(key=lambda x: x.get("exit_time") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         return results[:limit]
 
 
@@ -182,7 +182,7 @@ class SummaryRepo:
             "best_trade":     max((t["pnl"] for t in closed if t.get("pnl")), default=0.0),
             "worst_trade":    min((t["pnl"] for t in closed if t.get("pnl")), default=0.0),
             "open_trades":    TradeRepo.get_open_count(),
-            "updated_at":     datetime.utcnow(),
+            "updated_at":     datetime.now(timezone.utc),
         }
         summary_col().document(today_str).set(doc)
         return doc
@@ -198,7 +198,7 @@ class StateRepo:
         state_col().document(key).set({
             "key":        key,
             "value":      value,
-            "updated_at": datetime.utcnow(),
+            "updated_at": datetime.now(timezone.utc),
         })
 
     @staticmethod
@@ -223,7 +223,7 @@ class PerfRepo:
                 "wins":         fs.Increment(1 if is_win else 0),
                 "losses":       fs.Increment(0 if is_win else 1),
                 "total_pnl":    fs.Increment(pnl),
-                "updated_at":   datetime.utcnow(),
+                "updated_at":   datetime.now(timezone.utc),
             })
         else:
             ref.set({
@@ -232,8 +232,8 @@ class PerfRepo:
                 "wins":         1 if is_win else 0,
                 "losses":       0 if is_win else 1,
                 "total_pnl":    pnl,
-                "created_at":   datetime.utcnow(),
-                "updated_at":   datetime.utcnow(),
+                "created_at":   datetime.now(timezone.utc),
+                "updated_at":   datetime.now(timezone.utc),
             })
 
     @staticmethod

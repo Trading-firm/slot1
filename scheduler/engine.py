@@ -145,7 +145,8 @@ class TradingEngine:
 
     def _handle_trailing_stop(self, trade: dict, pos: dict):
         """
-        Break-Even management: moves SL to entry once profit reaches 1x ATR.
+        Break-Even management: moves SL to entry once profit reaches 0.5x ATR.
+        Triggers early to protect profit — once activated, worst case is break-even (0 loss).
         """
         from broker.mt5_connector import update_stops
         symbol = trade["symbol"]
@@ -166,8 +167,8 @@ class TradingEngine:
             current_price = tick.bid
             profit_dist   = current_price - entry_price
 
-            # Move SL to entry once profit >= 1x ATR (only if SL still below entry)
-            if profit_dist >= atr_entry and current_sl < entry_price:
+            # Move SL to entry once profit >= 0.5x ATR (only if SL still below entry)
+            if profit_dist >= atr_entry * 0.5 and current_sl < entry_price:
                 update_stops(trade["ticket"], symbol, entry_price, current_tp)
                 logger.info(f"[{symbol}] BREAK-EVEN: SL moved to entry {entry_price:.5f}")
 
@@ -175,8 +176,8 @@ class TradingEngine:
             current_price = tick.ask
             profit_dist   = entry_price - current_price
 
-            # Move SL to entry once profit >= 1x ATR (only if SL still above entry)
-            if profit_dist >= atr_entry and current_sl > entry_price:
+            # Move SL to entry once profit >= 0.5x ATR (only if SL still above entry)
+            if profit_dist >= atr_entry * 0.5 and current_sl > entry_price:
                 update_stops(trade["ticket"], symbol, entry_price, current_tp)
                 logger.info(f"[{symbol}] BREAK-EVEN: SL moved to entry {entry_price:.5f}")
 
@@ -284,54 +285,51 @@ class TradingEngine:
             return
 
         # ─── Position Sizing ──────────────────────────────
-        # Use the market's minimum lot size as a static fixed lot per order.
-        # Each TP order gets exactly min_lot — increase min_lot in markets.py to scale up.
+        # Fixed min_lot per market. Increase min_lot in markets.py to scale up.
         sym_info    = get_symbol_info(symbol)
         sym_min_lot = cfg.get("min_lot")
         if sym_min_lot is None:
             sym_min_lot = sym_info.volume_min if sym_info else settings.MIN_LOT_SIZE
 
-        lot_part = sym_min_lot
-
-        # ─── Scaling-Out: 3 separate orders at min_lot each ───────
-        tps = [signal.tp1, signal.tp2, signal.tp3]
+        # ─── Single Order at 1:1 R:R ──────────────────────
+        # One trade per signal. TP at 1:1 (backtested win rate).
+        # Break-even moves SL to entry at 0.5× ATR profit — profit is protected.
+        tp = signal.tp1
 
         logger.info(
-            f"[{symbol}] Placing {len(tps)} order(s) | "
-            f"Lot: {lot_part} each | SL: {signal.sl:.5f} | "
-            f"TPs: {[round(t, 5) for t in tps]}"
+            f"[{symbol}] Placing order | "
+            f"Lot: {sym_min_lot} | SL: {signal.sl:.5f} | TP: {tp:.5f}"
         )
 
-        for i, tp in enumerate(tps, 1):
-            order = place_order(
-                symbol    = symbol,
-                direction = signal.direction,
-                lot_size  = lot_part,
-                sl        = signal.sl,
-                tp        = tp,
-                comment   = f"UB_{cfg['strategy']}_TP{i}",
-            )
+        order = place_order(
+            symbol    = symbol,
+            direction = signal.direction,
+            lot_size  = sym_min_lot,
+            sl        = signal.sl,
+            tp        = tp,
+            comment   = f"UB_{cfg['strategy']}",
+        )
 
-            if not order:
-                logger.error(f"[{symbol}] Order placement FAILED for TP{i}")
-                continue
+        if not order:
+            logger.error(f"[{symbol}] Order placement FAILED")
+            return
 
-            TradeRepo.open_trade(
-                symbol      = symbol,
-                direction   = signal.direction,
-                entry_price = order["price"],
-                sl          = signal.sl,
-                tp          = tp,
-                lot_size    = lot_part,
-                ticket      = order["ticket"],
-                strategy    = cfg["strategy"],
-                timeframe   = cfg["tf_name"],
-                rsi         = signal.rsi,
-                atr         = signal.atr,
-                ema_trend   = signal.ema_trend,
-            )
+        TradeRepo.open_trade(
+            symbol      = symbol,
+            direction   = signal.direction,
+            entry_price = order["price"],
+            sl          = signal.sl,
+            tp          = tp,
+            lot_size    = sym_min_lot,
+            ticket      = order["ticket"],
+            strategy    = cfg["strategy"],
+            timeframe   = cfg["tf_name"],
+            rsi         = signal.rsi,
+            atr         = signal.atr,
+            ema_trend   = signal.ema_trend,
+        )
 
-            logger.info(
-                f"Trade executed ({i}/{len(tps)}) | {signal.direction} {symbol} | "
-                f"Lot: {lot_part} | TP: {tp:.5f} | Ticket: {order['ticket']}"
-            )
+        logger.info(
+            f"Trade executed | {signal.direction} {symbol} | "
+            f"Lot: {sym_min_lot} | TP: {tp:.5f} | Ticket: {order['ticket']}"
+        )

@@ -284,6 +284,14 @@ class TradingEngine:
             logger.warning(f"[{symbol}] Trade blocked by risk — {block_reason}")
             return
 
+        # ─── Balance-Based Market Rules ───────────────────
+        # Gold and Silver are expensive — skip if balance is below $500.
+        if symbol in ("XAUUSD", "XAGUSD") and balance < 500:
+            logger.warning(
+                f"[{symbol}] Skipped — balance ${balance:.2f} < $500 minimum for this market"
+            )
+            return
+
         # ─── Position Sizing ──────────────────────────────
         # Fixed min_lot per market. Increase min_lot in markets.py to scale up.
         sym_info    = get_symbol_info(symbol)
@@ -291,45 +299,58 @@ class TradingEngine:
         if sym_min_lot is None:
             sym_min_lot = sym_info.volume_min if sym_info else settings.MIN_LOT_SIZE
 
-        # ─── Single Order at 1:1 R:R ──────────────────────
-        # One trade per signal. TP at 1:1 (backtested win rate).
-        # Break-even moves SL to entry at 0.5× ATR profit — profit is protected.
+        # ─── Order Count: Boom 1000 scales with balance ───
+        # All other markets: 1 order (fixed).
+        # Boom 1000 Index: scale up order count as account grows.
+        if symbol == "Boom 1000 Index":
+            if balance >= 500:
+                num_orders = 10
+            elif balance >= 200:
+                num_orders = 5
+            elif balance >= 100:
+                num_orders = 3
+            else:
+                num_orders = 1
+        else:
+            num_orders = 1
+
         tp = signal.tp1
 
         logger.info(
-            f"[{symbol}] Placing order | "
-            f"Lot: {sym_min_lot} | SL: {signal.sl:.5f} | TP: {tp:.5f}"
+            f"[{symbol}] Placing {num_orders} order(s) | "
+            f"Lot: {sym_min_lot} each | SL: {signal.sl:.5f} | TP: {tp:.5f}"
         )
 
-        order = place_order(
-            symbol    = symbol,
-            direction = signal.direction,
-            lot_size  = sym_min_lot,
-            sl        = signal.sl,
-            tp        = tp,
-            comment   = f"UB_{cfg['strategy']}",
-        )
+        for i in range(1, num_orders + 1):
+            order = place_order(
+                symbol    = symbol,
+                direction = signal.direction,
+                lot_size  = sym_min_lot,
+                sl        = signal.sl,
+                tp        = tp,
+                comment   = f"UB_{cfg['strategy']}_{i}" if num_orders > 1 else f"UB_{cfg['strategy']}",
+            )
 
-        if not order:
-            logger.error(f"[{symbol}] Order placement FAILED")
-            return
+            if not order:
+                logger.error(f"[{symbol}] Order placement FAILED (order {i}/{num_orders})")
+                continue
 
-        TradeRepo.open_trade(
-            symbol      = symbol,
-            direction   = signal.direction,
-            entry_price = order["price"],
-            sl          = signal.sl,
-            tp          = tp,
-            lot_size    = sym_min_lot,
-            ticket      = order["ticket"],
-            strategy    = cfg["strategy"],
-            timeframe   = cfg["tf_name"],
-            rsi         = signal.rsi,
-            atr         = signal.atr,
-            ema_trend   = signal.ema_trend,
-        )
+            TradeRepo.open_trade(
+                symbol      = symbol,
+                direction   = signal.direction,
+                entry_price = order["price"],
+                sl          = signal.sl,
+                tp          = tp,
+                lot_size    = sym_min_lot,
+                ticket      = order["ticket"],
+                strategy    = cfg["strategy"],
+                timeframe   = cfg["tf_name"],
+                rsi         = signal.rsi,
+                atr         = signal.atr,
+                ema_trend   = signal.ema_trend,
+            )
 
-        logger.info(
-            f"Trade executed | {signal.direction} {symbol} | "
-            f"Lot: {sym_min_lot} | TP: {tp:.5f} | Ticket: {order['ticket']}"
-        )
+            logger.info(
+                f"Trade executed ({i}/{num_orders}) | {signal.direction} {symbol} | "
+                f"Lot: {sym_min_lot} | TP: {tp:.5f} | Ticket: {order['ticket']}"
+            )

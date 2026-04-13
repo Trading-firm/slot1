@@ -35,10 +35,24 @@ class RiskManager:
         Returns (True, "") if trade is allowed.
         Returns (False, reason) if blocked.
         """
-        # Rule 1 — Max open trades (reserve 3 slots for new scaling set)
+        # Rule 1 — Max open trades
+        # Reserve slots based on what this market could place:
+        # Boom 1000 can place up to 10 orders; all others place 1.
+        if symbol == "Boom 1000 Index":
+            if balance >= 500:
+                slots_needed = 10
+            elif balance >= 200:
+                slots_needed = 5
+            elif balance >= 100:
+                slots_needed = 3
+            else:
+                slots_needed = 1
+        else:
+            slots_needed = 1
+
         open_count = TradeRepo.get_open_count()
-        if open_count + 3 > self.max_open:
-            reason = f"Max trades reached — need 3 free slots ({open_count}/{self.max_open})"
+        if open_count + slots_needed > self.max_open:
+            reason = f"Max trades reached — need {slots_needed} free slot(s) ({open_count}/{self.max_open})"
             logger.warning(f"[{symbol}] Blocked — {reason}")
             return False, reason
 

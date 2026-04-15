@@ -119,18 +119,22 @@ def generate_signal(
         rsi_ok_buy  = filters.get("rsi_min_buy",  35) <= rsi <= filters.get("rsi_max_buy",  58)
         rsi_ok_sell = filters.get("rsi_min_sell", 42) <= rsi <= filters.get("rsi_max_sell", 65)
 
+        # Pullback tolerance — fraction of ATR the low/high may deviate from EMA20
+        # and still count as a valid pullback touch. 0.0 = strict (must touch).
+        pullback_tol = filters.get("pullback_tol", 0.0) * atr
+
         if strong_trend:
             # ── Pullback to EMA20 Entry ─────────────────────
             # Requires:
-            #   • Low touched EMA20 (the pullback happened)
+            #   • Low reached (or came within pullback_tol ATR of) EMA20
             #   • Candle CLOSED back above/below EMA20 (rejection confirmed)
             #   • Bullish/bearish candle (direction confirmed)
             #   • RSI cooled into the pullback zone
-            if uptrend and curr_low <= ema_f and close > ema_f and candle_bull and rsi_ok_buy:
+            if uptrend and curr_low <= ema_f + pullback_tol and close > ema_f and candle_bull and rsi_ok_buy:
                 base_dir = "BUY"
                 reason   = f"Trend: EMA20 Pullback + Bullish Close | RSI:{rsi:.0f} ADX:{adx:.1f}"
 
-            elif downtrend and curr_high >= ema_f and close < ema_f and candle_bear and rsi_ok_sell:
+            elif downtrend and curr_high >= ema_f - pullback_tol and close < ema_f and candle_bear and rsi_ok_sell:
                 base_dir = "SELL"
                 reason   = f"Trend: EMA20 Pullback + Bearish Close | RSI:{rsi:.0f} ADX:{adx:.1f}"
 

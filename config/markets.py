@@ -53,8 +53,22 @@ MARKETS = {
             "sessions":           [],     # 24/5 (gold closed weekends anyway)
         },
         "min_lot":      0.01,   # Exness min; $1 per $1 move
+        # exit_at_profit_usd disabled — momentum-exit now handles profit-taking
+        # "exit_at_profit_usd": 9.60,
+
+        # Momentum-ride-and-escape exit — BACKTESTED WINNER for gold (67.2% WR, +$375/90d)
+        #   When current candle body < 0.40: momentum faded — escape now
+        #   in profit (>=$0.50)     -> close immediately
+        #   at breakeven (+/- $0.50) -> close
+        #   small loss (up to -$3)  -> hold for recovery
+        #   big loss                -> let structural SL handle
+        "weak_exit_enabled":     True,
+        "weak_body_threshold":   0.40,
+        "be_tolerance_usd":      0.50,
+        "small_loss_limit_usd":  3.00,
+
         "atr_period":   14,
-        "swing_window": 10,     # unused by scalper but kept for compatibility
+        "swing_window": 10,
     },
 
     # ── BTCUSD — Momentum Candle Scalper ────────────────────────────────────
@@ -75,7 +89,16 @@ MARKETS = {
             "atr_period":         14,
             "sessions":           [],     # 24/7
         },
-        "min_lot":      0.05,   # Exness min; $1 price move = $0.01 P/L
+        "min_lot":      0.04,
+        # exit_at_profit_usd disabled — momentum-exit handles profit-taking
+        # "exit_at_profit_usd": 5.60,
+
+        # Momentum-ride-and-escape — BACKTESTED WINNER for BTC (70.6% WR, +$432/90d)
+        "weak_exit_enabled":     True,
+        "weak_body_threshold":   0.60,   # BTC candles stay strong longer; use higher threshold
+        "be_tolerance_usd":      0.25,
+        "small_loss_limit_usd":  3.00,
+
         "atr_period":   14,
         "swing_window": 10,
     },

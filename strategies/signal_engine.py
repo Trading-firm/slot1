@@ -51,17 +51,26 @@ def generate_signal(
     filters  = cfg.get("filters", {})
 
     # ─── Scalper dispatch ─────────────────────────────────
-    # Momentum candle scalper. Reads live spread from MT5 if available.
+    # Momentum candle scalper. Reads live spread + contract size from MT5.
     if strategy == "scalper":
         from strategies.scalper import generate_scalp_signal
+        spread_price  = 0.0
+        contract_size = 1.0
         try:
             import MetaTrader5 as mt5
             si = mt5.symbol_info(symbol)
-            spread_price = (si.spread * si.point) if si else 0.0
+            if si:
+                spread_price  = si.spread * si.point
+                contract_size = si.trade_contract_size
         except Exception:
-            spread_price = 0.0
+            pass
 
-        scalp = generate_scalp_signal(df, cfg, spread_price=spread_price)
+        scalp = generate_scalp_signal(
+            df, cfg,
+            spread_price=spread_price,
+            lot_size=cfg.get("min_lot", 0.01),
+            contract_size=contract_size,
+        )
         if scalp.direction == "NONE":
             return _empty_signal(symbol, scalp.entry, 0.0, 0.0, 0.0,
                                  base_signal="NONE", reason=scalp.reason)

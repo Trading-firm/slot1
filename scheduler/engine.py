@@ -90,10 +90,38 @@ class TradingEngine:
                 self._record_mt5_close(trade)
                 synced += 1
             else:
-                # Position still open — check if we should exit early
+                pos = next(p for p in mt5_positions if p["ticket"] == ticket)
+
+                # Weak-market smart exit (profit/BE when momentum fades)
+                should_exit, reason = self._weak_market_exit(trade, pos)
+                if should_exit:
+                    from broker.mt5_connector import close_order
+                    tick = mt5.symbol_info_tick(trade["symbol"])
+                    close_price = (
+                        tick.bid if trade["direction"] == "BUY" else tick.ask
+                    ) if tick else None
+                    if close_order(ticket, trade["symbol"], trade["direction"], trade["lot_size"]):
+                        logger.info(f"[{trade['symbol']}] WEAK-MARKET EXIT — {reason}")
+                        self._record_manual_close(trade, close_price, "Weak Market Exit")
+                        continue
+
+                # Profit-target monitor: close if live P/L >= cfg['exit_at_profit_usd']
+                if self._profit_target_hit(trade, pos):
+                    from broker.mt5_connector import close_order
+                    tick = mt5.symbol_info_tick(trade["symbol"])
+                    close_price = (
+                        tick.bid if trade["direction"] == "BUY" else tick.ask
+                    ) if tick else None
+                    if close_order(ticket, trade["symbol"], trade["direction"], trade["lot_size"]):
+                        logger.info(
+                            f"[{trade['symbol']}] PROFIT-TARGET EXIT at ${pos['profit']:.2f}"
+                        )
+                        self._record_manual_close(trade, close_price, "Profit Target")
+                        continue
+
+                # Signal-reversal / invalidation early exit
                 if self._should_early_exit(trade):
                     from broker.mt5_connector import close_order
-                    # Capture close price before sending the order
                     tick = mt5.symbol_info_tick(trade["symbol"])
                     close_price = (
                         tick.bid if trade["direction"] == "BUY" else tick.ask
@@ -101,15 +129,94 @@ class TradingEngine:
 
                     if close_order(ticket, trade["symbol"], trade["direction"], trade["lot_size"]):
                         logger.info(f"[{trade['symbol']}] EARLY EXIT: Signal Invalidated or Reversed")
-                        # Record close immediately with the captured price
                         self._record_manual_close(trade, close_price, "Early Exit")
-                        continue  # Skip trailing-stop logic for this trade
+                        continue
 
-                pos = next(p for p in mt5_positions if p["ticket"] == ticket)
                 self._handle_trailing_stop(trade, pos)
 
         if synced:
             logger.info(f"Synced {synced} closed position(s) from MT5")
+
+    def _weak_market_exit(self, trade: dict, pos: dict) -> tuple:
+        """
+        Smart exit when market momentum fades (per user spec):
+          - Current candle body weak (below threshold) = market not worth staying in
+          - If in profit  -> close immediately (lock what we have)
+          - If at BE      -> close (walk away flat)
+          - If small loss -> DO NOT CLOSE. Wait for recovery to BE/profit.
+          - If big loss   -> let broker SL handle it (no action here)
+
+        Active only when strategy == "scalper" and cfg.weak_exit_enabled is True.
+        Per-market configurable:
+          weak_exit_enabled       (bool, default False)
+          weak_body_threshold     (float, default 0.5)   — body_pct below this = weak
+          be_tolerance_usd        ($,    default 0.50)   — within +/- this = BE
+          small_loss_limit_usd    ($,    default 5.00)   — losses up to this = "small"
+
+        Returns (should_close: bool, reason: str).
+        """
+        symbol = trade["symbol"]
+        cfg    = MARKETS.get(symbol)
+        if not cfg or cfg.get("strategy") != "scalper":
+            return False, ""
+
+        filters = cfg.get("filters", {})
+        if not cfg.get("weak_exit_enabled"):
+            return False, ""
+
+        weak_threshold = cfg.get("weak_body_threshold", 0.5)
+        be_tol         = cfg.get("be_tolerance_usd",   0.50)
+        small_loss     = cfg.get("small_loss_limit_usd", 5.00)
+
+        # Fetch latest candle to assess market strength
+        df = fetch_candles(symbol, cfg["timeframe"], count=20)
+        if df.empty or len(df) < 3:
+            return False, ""
+
+        idx = -2  # last completed candle
+        o, h, l, c = (df["Open"].iloc[idx], df["High"].iloc[idx],
+                      df["Low"].iloc[idx], df["Close"].iloc[idx])
+        rng = h - l
+        if rng <= 0:
+            return False, ""
+        body_pct = abs(c - o) / rng
+
+        # Market still showing momentum? Let the trade run.
+        if body_pct >= weak_threshold:
+            return False, ""
+
+        # Market weakened — apply exit rules based on current P/L
+        profit = pos.get("profit", 0)
+
+        if profit >= be_tol:
+            return True, f"Weak market + in profit (body {body_pct:.2f}, P/L ${profit:+.2f})"
+        if profit >= -be_tol:
+            return True, f"Weak market + at breakeven (body {body_pct:.2f}, P/L ${profit:+.2f})"
+        if profit >= -small_loss:
+            # Small loss — hold and wait for recovery. Don't close now.
+            return False, ""
+        # Big loss — let SL do its job
+        return False, ""
+
+
+    def _profit_target_hit(self, trade: dict, pos: dict) -> bool:
+        """
+        Return True if the live floating profit (from broker) on this position
+        has reached the market's configured exit_at_profit_usd threshold.
+
+        Configure per market in config/markets.py:
+            "exit_at_profit_usd": 2.00   # close when P/L reaches +$2 (or more)
+
+        If the field is absent or 0, the monitor is disabled for that market.
+        """
+        symbol = trade["symbol"]
+        cfg    = MARKETS.get(symbol)
+        if not cfg:
+            return False
+        target = cfg.get("exit_at_profit_usd")
+        if not target or target <= 0:
+            return False
+        return pos.get("profit", 0) >= target
 
     def _should_early_exit(self, trade: dict) -> bool:
         """

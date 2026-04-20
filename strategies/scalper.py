@@ -34,21 +34,33 @@ def generate_scalp_signal(
     df: pd.DataFrame,
     cfg: dict,
     spread_price: float = 0.0,
+    lot_size: float = 0.01,
+    contract_size: float = 1.0,
 ) -> ScalpSignal:
     """
     Evaluate the last *completed* candle (idx=-2) for a scalp setup.
     Returns ScalpSignal with direction == "NONE" if no setup.
+
+    SL/TP placement is controlled by filters.sl_mode:
+      "structural" (default) — SL at trigger candle extreme +/- ATR buffer,
+                               TP = SL_dist * rr_ratio
+      "fixed_usd"            — SL at fixed $ loss (filters.sl_usd),
+                               TP at fixed $ profit (filters.tp_usd).
+                               Uses lot_size * contract_size to convert $ to price.
     """
     f = cfg.get("filters", {})
     body_min_pct       = f.get("body_min_pct", 0.6)
     body_lookback      = f.get("body_lookback", 5)
-    close_extremity    = f.get("close_extremity", 1/3)   # close within top/bottom 1/3
+    close_extremity    = f.get("close_extremity", 1/3)
     min_range_x_spread = f.get("min_range_x_spread", 4)
     use_ema_filter     = f.get("use_ema_filter", True)
     ema_period         = f.get("ema_period", 8)
     sl_buffer_atr      = f.get("sl_buffer_atr", 0.1)
     rr_ratio           = f.get("rr_ratio", 1.0)
     atr_period         = f.get("atr_period", 14)
+    sl_mode            = f.get("sl_mode", "structural")
+    sl_usd             = f.get("sl_usd", 3.0)
+    tp_usd             = f.get("tp_usd", 4.5)
 
     if len(df) < max(body_lookback + 5, ema_period + 2, atr_period + 2):
         return ScalpSignal("NONE", "insufficient bars", 0, 0, 0, 0)
@@ -104,24 +116,39 @@ def generate_scalp_signal(
     else:
         return ScalpSignal("NONE", "direction filter failed", c, 0, 0, body_pct)
 
-    # Structural SL with small ATR buffer
-    buffer = atr * sl_buffer_atr
-    if direction == "BUY":
-        sl = l - buffer
-        sl_dist = c - sl
-        if sl_dist <= 0:
-            return ScalpSignal("NONE", "sl_dist <= 0", c, 0, 0, body_pct)
-        tp = c + sl_dist * rr_ratio
+    if sl_mode == "fixed_usd":
+        # Convert $ amounts to price distances
+        if lot_size <= 0 or contract_size <= 0:
+            return ScalpSignal("NONE", "invalid lot/contract for fixed_usd", c, 0, 0, body_pct)
+        sl_dist = sl_usd / (lot_size * contract_size)
+        tp_dist = tp_usd / (lot_size * contract_size)
+        if direction == "BUY":
+            sl = c - sl_dist
+            tp = c + tp_dist
+        else:
+            sl = c + sl_dist
+            tp = c - tp_dist
+        reason = f"fixed $ scalp body={body_pct:.2f} SL=${sl_usd} TP=${tp_usd}"
     else:
-        sl = h + buffer
-        sl_dist = sl - c
-        if sl_dist <= 0:
-            return ScalpSignal("NONE", "sl_dist <= 0", c, 0, 0, body_pct)
-        tp = c - sl_dist * rr_ratio
+        # Structural SL with small ATR buffer (original mode)
+        buffer = atr * sl_buffer_atr
+        if direction == "BUY":
+            sl = l - buffer
+            sl_dist = c - sl
+            if sl_dist <= 0:
+                return ScalpSignal("NONE", "sl_dist <= 0", c, 0, 0, body_pct)
+            tp = c + sl_dist * rr_ratio
+        else:
+            sl = h + buffer
+            sl_dist = sl - c
+            if sl_dist <= 0:
+                return ScalpSignal("NONE", "sl_dist <= 0", c, 0, 0, body_pct)
+            tp = c - sl_dist * rr_ratio
+        reason = f"momentum candle body={body_pct:.2f} range={rng:.5f}"
 
     return ScalpSignal(
         direction=direction,
-        reason=f"momentum candle body={body_pct:.2f} range={rng:.5f}",
+        reason=reason,
         entry=c,
         sl=sl,
         tp=tp,

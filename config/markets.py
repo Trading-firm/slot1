@@ -10,9 +10,10 @@ Winning configs from 90-day sweeps with spread modeled:
     WR 43.3%, ~3 T/D, +0.07R exp, +$1,036/90d @ 0.01 lot (spread $0.155)
     (Tightened from 1:2.5 for more frequent smaller wins per user preference)
 
-  BTCUSD — scripts/btc_scalper_sweep.py
-    M15 | body >= 0.75 | R:R = 1:1.5 | EMA8 filter OFF | min_range >= 5*spread | 24/7
-    WR 49.4%, ~4.9 T/D, +0.21R exp, +$454.92/90d @ 0.01 lot (spread $6.00)
+  BTCUSD — scripts/btc_scalper_sweep.py + btc_fixed_target_backtest.py
+    M15 | body >= 0.75 | R:R = 1:1.0 | EMA8 filter OFF | min_range >= 5*spread | 24/7
+    WR 54.9%, ~6 T/D, +$306.80/90d @ 0.01 lot (spread $6.00)
+    (Tightened from 1:1.5 — user wants more frequent wins; 1:1.0 keeps the math honest)
 
 Combined projection: ~6.8 T/D, ~45% WR, ~$1,893/90d @ 0.01 lot per market.
 
@@ -70,11 +71,11 @@ MARKETS = {
             "use_ema_filter":     False,  # EMA filter reduced profit on BTC
             "ema_period":         8,
             "sl_buffer_atr":      0.1,
-            "rr_ratio":           1.5,    # BTC trends smoother → 1:1.5 wins more often
+            "rr_ratio":           1.0,    # 54.9% WR, 6 T/D, +$306.80/90d (backtest)
             "atr_period":         14,
             "sessions":           [],     # 24/7
         },
-        "min_lot":      0.01,   # Exness min; $1 price move = $0.01 P/L
+        "min_lot":      0.05,   # Exness min; $1 price move = $0.01 P/L
         "atr_period":   14,
         "swing_window": 10,
     },

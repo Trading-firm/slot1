@@ -87,31 +87,11 @@ class RiskManager:
                     logger.warning(f"[{symbol}] Blocked — {reason}")
                     return False, reason
 
-        # Rule 5 — Market-Specific Cooldown
-        last_trade = TradeRepo.get_last_closed_trade(symbol)
-        if last_trade and last_trade.get("exit_time"):
-            exit_time = last_trade["exit_time"]
-            reason    = last_trade.get("exit_reason", "SL")
-            
-            # 8-hour wait after a Hard SL (Market trend might be changing)
-            # 2-hour wait after a Trailing Stop (Wait for next pullback)
-            # 1-hour wait after a TP (Wait for next pullback)
-            if "SL" in reason:
-                cooldown_mins = 480 # 8 hours
-            elif "Trail" in reason or "Break-Even" in reason:
-                cooldown_mins = 120 # 2 hours
-            else:
-                cooldown_mins = 60  # 1 hour
-                
-            wait_until    = exit_time + timedelta(minutes=cooldown_mins)
-            
-            now = datetime.now(timezone.utc)
-            if now < wait_until:
-                diff = wait_until - now
-                mins_left = round(diff.total_seconds() / 60)
-                msg = f"In cooldown after {reason} — {mins_left}m remaining"
-                logger.warning(f"[{symbol}] Blocked — {msg}")
-                return False, msg
+        # Rule 5 — Market-Specific Cooldown (disabled)
+        # Post-TP/SL cooldowns conflict with the scalper strategy, which is
+        # designed to fire multiple times per day. The backtest assumed no
+        # cooldown, so leaving this disabled keeps live behaviour aligned
+        # with backtest. Re-enable only if a market regime shows benefit.
 
         return True, ""
 

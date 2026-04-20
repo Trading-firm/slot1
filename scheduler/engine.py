@@ -168,8 +168,12 @@ class TradingEngine:
         be_tol         = cfg.get("be_tolerance_usd",   0.50)
         small_loss     = cfg.get("small_loss_limit_usd", 5.00)
 
-        # Fetch latest candle to assess market strength
-        df = fetch_candles(symbol, cfg["timeframe"], count=20)
+        trend_filter_enabled = filters.get("trend_filter_enabled", False)
+        trend_adx_min        = filters.get("trend_adx_min", 20)
+
+        # Fetch latest candles (need 210+ for EMA200 if trend filter is on)
+        bars_needed = 210 if trend_filter_enabled else 20
+        df = fetch_candles(symbol, cfg["timeframe"], count=bars_needed)
         if df.empty or len(df) < 3:
             return False, ""
 
@@ -181,6 +185,30 @@ class TradingEngine:
             return False, ""
         body_pct = abs(c - o) / rng
 
+        # ── Trend-aware override (your spec: ride the trend, escape only when it dies) ──
+        if trend_filter_enabled and len(df) >= 205:
+            import math as _math
+            from strategies.indicators import calc_ema, calc_adx
+            ema50  = calc_ema(df, 50).iloc[idx]
+            ema200 = calc_ema(df, 200).iloc[idx]
+            adx_v  = calc_adx(df, 14).iloc[idx]
+
+            if not (_math.isnan(ema50) or _math.isnan(ema200) or _math.isnan(adx_v)):
+                trend_up   = c > ema50 and ema50 > ema200 and adx_v >= trend_adx_min
+                trend_down = c < ema50 and ema50 < ema200 and adx_v >= trend_adx_min
+                trade_dir  = trade["direction"]
+
+                # Trend still with us -> HOLD regardless of candle strength
+                if (trade_dir == "BUY"  and trend_up) or \
+                   (trade_dir == "SELL" and trend_down):
+                    return False, ""
+
+                # Trend flipped against us -> CLOSE immediately
+                if (trade_dir == "BUY"  and trend_down) or \
+                   (trade_dir == "SELL" and trend_up):
+                    return True, f"Trend reversed (ADX:{adx_v:.1f})"
+
+        # ── Standard momentum-fade logic (trend weak or filter off) ──
         # Market still showing momentum? Let the trade run.
         if body_pct >= weak_threshold:
             return False, ""
@@ -193,7 +221,7 @@ class TradingEngine:
         if profit >= -be_tol:
             return True, f"Weak market + at breakeven (body {body_pct:.2f}, P/L ${profit:+.2f})"
         if profit >= -small_loss:
-            # Small loss — hold and wait for recovery. Don't close now.
+            # Small loss — hold and wait for recovery.
             return False, ""
         # Big loss — let SL do its job
         return False, ""

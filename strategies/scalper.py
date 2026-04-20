@@ -17,7 +17,7 @@ Exit:
 from dataclasses import dataclass
 import math
 import pandas as pd
-from strategies.indicators import calc_ema, calc_atr
+from strategies.indicators import calc_ema, calc_atr, calc_adx
 
 
 @dataclass
@@ -61,6 +61,8 @@ def generate_scalp_signal(
     sl_mode            = f.get("sl_mode", "structural")
     sl_usd             = f.get("sl_usd", 3.0)
     tp_usd             = f.get("tp_usd", 4.5)
+    trend_filter_enabled = f.get("trend_filter_enabled", False)
+    trend_adx_min      = f.get("trend_adx_min", 20)
 
     if len(df) < max(body_lookback + 5, ema_period + 2, atr_period + 2):
         return ScalpSignal("NONE", "insufficient bars", 0, 0, 0, 0)
@@ -115,6 +117,26 @@ def generate_scalp_signal(
         direction = "SELL"
     else:
         return ScalpSignal("NONE", "direction filter failed", c, 0, 0, body_pct)
+
+    # Filter 6: Trend alignment (optional)
+    # Requires: close vs EMA50 vs EMA200 aligned, ADX >= threshold.
+    # BUY  allowed only in confirmed uptrend;
+    # SELL allowed only in confirmed downtrend.
+    if trend_filter_enabled:
+        if len(df) < 205:
+            return ScalpSignal("NONE", "not enough data for trend", c, 0, 0, body_pct)
+        ema50  = calc_ema(df, 50).iloc[idx]
+        ema200 = calc_ema(df, 200).iloc[idx]
+        adx_v  = calc_adx(df, 14).iloc[idx]
+        if math.isnan(ema50) or math.isnan(ema200) or math.isnan(adx_v):
+            return ScalpSignal("NONE", "trend indicators not ready", c, 0, 0, body_pct)
+
+        trend_up   = c > ema50 and ema50 > ema200 and adx_v >= trend_adx_min
+        trend_down = c < ema50 and ema50 < ema200 and adx_v >= trend_adx_min
+        if direction == "BUY" and not trend_up:
+            return ScalpSignal("NONE", f"no uptrend (ADX:{adx_v:.1f})", c, 0, 0, body_pct)
+        if direction == "SELL" and not trend_down:
+            return ScalpSignal("NONE", f"no downtrend (ADX:{adx_v:.1f})", c, 0, 0, body_pct)
 
     if sl_mode == "fixed_usd":
         # Convert $ amounts to price distances

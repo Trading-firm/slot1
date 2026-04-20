@@ -56,22 +56,27 @@ MARKETS = {
         # exit_at_profit_usd disabled — momentum-exit now handles profit-taking
         # "exit_at_profit_usd": 9.60,
 
-        # Momentum-ride-and-escape exit — BACKTESTED WINNER for gold (67.2% WR, +$375/90d)
-        #   When current candle body < 0.40: momentum faded — escape now
-        #   in profit (>=$0.50)     -> close immediately
-        #   at breakeven (+/- $0.50) -> close
-        #   small loss (up to -$3)  -> hold for recovery
-        #   big loss                -> let structural SL handle
+        # Momentum-ride-and-escape exit — RELAXED thresholds (Fix A1)
+        # Backtest: +$536/90d vs previous +$388 by holding through natural pullbacks.
+        # Addresses the "entered-at-peak -> retracement -> BE exit" problem.
+        #   weak_body < 0.25     -> only truly dead candles count as weak
+        #   in profit (>=$1)     -> close immediately
+        #   at BE (+/- $1)       -> close
+        #   small loss (up to -$5) -> hold for recovery (was -$3)
+        #   big loss              -> let structural SL handle
         "weak_exit_enabled":     True,
-        "weak_body_threshold":   0.40,
-        "be_tolerance_usd":      0.50,
-        "small_loss_limit_usd":  3.00,
+        "weak_body_threshold":   0.25,
+        "be_tolerance_usd":      1.00,
+        "small_loss_limit_usd":  5.00,
 
         "atr_period":   14,
         "swing_window": 10,
     },
 
-    # ── BTCUSD — Momentum Candle Scalper ────────────────────────────────────
+    # ── BTCUSD — Trend-Aware Momentum Scalper ──────────────────────────────
+    # Backtest: trend filter turns +$432 into +$1,227 / 90d (43% WR, 1.4 T/D)
+    # BTC trends persist, so riding with the trend + escaping when trend dies
+    # is dramatically more profitable than raw scalping.
     "BTCUSD": {
         "symbol":    "BTCUSD",
         "timeframe": mt5.TIMEFRAME_M15,
@@ -81,21 +86,32 @@ MARKETS = {
             "body_min_pct":       0.75,
             "body_lookback":      5,
             "close_extremity":    1/3,
-            "min_range_x_spread": 5,      # tighter than gold — BTC ranges are huge
-            "use_ema_filter":     False,  # EMA filter reduced profit on BTC
+            "min_range_x_spread": 5,
+            "use_ema_filter":     False,  # EMA8 filter hurt BTC in raw scalping
             "ema_period":         8,
             "sl_buffer_atr":      0.1,
-            "rr_ratio":           1.0,    # 54.9% WR, 6 T/D, +$306.80/90d (backtest)
+            "rr_ratio":           1.0,
             "atr_period":         14,
             "sessions":           [],     # 24/7
+
+            # Trend filter (BACKTESTED WINNER for BTC)
+            #   Only enter BUY when price > EMA50 > EMA200 AND ADX >= 15
+            #   Only enter SELL when price < EMA50 < EMA200 AND ADX >= 15
+            "trend_filter_enabled": True,
+            "trend_adx_min":        15,
         },
         "min_lot":      0.04,
-        # exit_at_profit_usd disabled — momentum-exit handles profit-taking
+        # exit_at_profit_usd disabled — momentum+trend exit handles profit-taking
         # "exit_at_profit_usd": 5.60,
 
-        # Momentum-ride-and-escape — BACKTESTED WINNER for BTC (70.6% WR, +$432/90d)
+        # Trend-aware exit:
+        #   Trend still UP/DOWN in our favor  -> HOLD (ride it)
+        #   Trend reversed                    -> CLOSE immediately
+        #   Trend weak + candle weak + profit -> CLOSE
+        #   Trend weak + candle weak + BE     -> CLOSE
+        #   Trend weak + small loss           -> WAIT for recovery
         "weak_exit_enabled":     True,
-        "weak_body_threshold":   0.60,   # BTC candles stay strong longer; use higher threshold
+        "weak_body_threshold":   0.40,   # lowered since trend now dominates the hold logic
         "be_tolerance_usd":      0.25,
         "small_loss_limit_usd":  3.00,
 

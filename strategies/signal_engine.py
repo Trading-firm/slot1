@@ -50,6 +50,38 @@ def generate_signal(
     strategy = cfg["strategy"]
     filters  = cfg.get("filters", {})
 
+    # ─── Scalper dispatch ─────────────────────────────────
+    # Momentum candle scalper. Reads live spread from MT5 if available.
+    if strategy == "scalper":
+        from strategies.scalper import generate_scalp_signal
+        try:
+            import MetaTrader5 as mt5
+            si = mt5.symbol_info(symbol)
+            spread_price = (si.spread * si.point) if si else 0.0
+        except Exception:
+            spread_price = 0.0
+
+        scalp = generate_scalp_signal(df, cfg, spread_price=spread_price)
+        if scalp.direction == "NONE":
+            return _empty_signal(symbol, scalp.entry, 0.0, 0.0, 0.0,
+                                 base_signal="NONE", reason=scalp.reason)
+        logger.info(f"[{symbol}] SCALP {scalp.direction} | {scalp.reason} | "
+                    f"entry~{scalp.entry:.5f} SL:{scalp.sl:.5f} TP:{scalp.tp:.5f}")
+        return Signal(
+            symbol      = symbol,
+            direction   = scalp.direction,
+            reason      = scalp.reason,
+            base_signal = scalp.direction,
+            close       = scalp.entry,
+            atr         = 0.0,   # scalper uses structural SL, atr=0 disables BE trailing
+            sl          = round(scalp.sl, 5),
+            tp1         = round(scalp.tp, 5),
+            tp2         = round(scalp.tp, 5),
+            tp3         = round(scalp.tp, 5),
+            rsi         = 0.0,
+            ema_trend   = 0.0,
+        )
+
     # ─── Indicators ────────────────────────────────────────
     atr_vals   = calc_atr(df, cfg.get("atr_period", 14))
     rsi_vals   = calc_rsi(df, cfg.get("rsi_period", 14))
@@ -282,6 +314,10 @@ def check_invalidation(df: pd.DataFrame, trade: dict, cfg: dict) -> tuple:
     Checks if the current market structure invalidates the open trade.
     Returns (True, reason) if invalidated, else (False, "").
     """
+    # Scalper trades are short-lived — let SL/TP handle exit.
+    if cfg.get("strategy") == "scalper":
+        return False, ""
+
     direction  = trade["direction"]
     idx        = -1
     close      = df["Close"].iloc[idx]

@@ -285,8 +285,9 @@ class TradingEngine:
             return
 
         # ─── Balance-Based Market Rules ───────────────────
-        # Gold and Silver are expensive — skip if balance is below $500.
-        if symbol in ("XAUUSD", "XAGUSD") and balance < 500:
+        # XAGUSD only: skip if balance is below $500 (silver lots are expensive).
+        # XAUUSD on Exness: 0.01 lot is fine on $200+ accounts.
+        if symbol == "XAGUSD" and balance < 500:
             logger.warning(
                 f"[{symbol}] Skipped — balance ${balance:.2f} < $500 minimum for this market"
             )
@@ -315,6 +316,22 @@ class TradingEngine:
             num_orders = 1
 
         tp = signal.tp1
+
+        # ─── Fixed-Dollar Profit Target Override ──────────
+        # If cfg defines profit_target_usd, compute TP as the exact price where
+        # profit = target. This overrides the scalper's rr_ratio-based TP.
+        profit_target = cfg.get("filters", {}).get("profit_target_usd")
+        if profit_target and sym_info:
+            contract = sym_info.trade_contract_size
+            if contract and sym_min_lot:
+                price_move = profit_target / (sym_min_lot * contract)
+                entry_price = signal.close  # close of trigger candle (entry estimate)
+                tp = entry_price + price_move if signal.direction == "BUY" \
+                     else entry_price - price_move
+                logger.info(
+                    f"[{symbol}] TP override: ${profit_target} target -> "
+                    f"price move ${price_move:.3f} -> TP {tp:.5f}"
+                )
 
         logger.info(
             f"[{symbol}] Placing {num_orders} order(s) | "

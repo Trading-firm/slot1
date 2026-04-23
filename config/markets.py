@@ -34,18 +34,23 @@ import MetaTrader5 as mt5
 MARKETS = {
 
     # ── BTCUSD — Structure-based trader ─────────────────────────────────────
+    # symbol_candidates: bot picks the first one that exists on the connected
+    # account. Demo (Trial) uses 'BTCUSD'; real micro account uses 'BTCUSDm'.
+    # Add more variants here if other brokers/account types use different names.
     "BTCUSD": {
-        "symbol":    "BTCUSD",
+        "symbol_candidates": ["BTCUSD", "BTCUSDm", "BTCUSDc", "BTC/USD"],
+        "symbol":    "BTCUSD",   # fallback / legacy display name
         "timeframe": mt5.TIMEFRAME_M15,
         "tf_name":   "M15",
         "strategy":  "structure_trader",
 
-        # Dual-trade execution — ALWAYS places 2 orders per signal
+        # Dual-trade execution — places 2 orders per signal (A + B)
         "dual_trade": {
             "trade_a_lot":            0.01,
             "trade_b_lot":            0.01,
-            "trade_b_profit_usd":     2.00,    # $2 scalp (0 = disable trade B)
-            "trade_b_max_loss_usd":   3.00,    # tightened from $5 — B's avg loss must be < avg win
+            "trade_b_profit_usd":     0,    # $2 scalp (0 = disable trade B entirely)
+            "trade_b_max_loss_usd":  0,    # tighter SL — B's avg loss must be < avg win
+            "min_balance_for_b":      100.0,   # accounts below this skip B (capital protection)
         },
 
         # Entry engine thresholds

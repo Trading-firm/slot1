@@ -52,6 +52,28 @@ def fetch_candles(symbol: str, timeframe: int, count: int = 500) -> pd.DataFrame
     return df
 
 
+def resolve_symbol(candidates) -> str:
+    """
+    Given a single symbol name OR a list of candidates, return the first one
+    that exists on the connected MT5 account (selecting it into Market Watch).
+    Returns "" if none found.
+
+    Use this when the same logical market has different names per broker / account
+    type (e.g. BTCUSD on demo vs BTCUSDm on real micro account).
+    """
+    import MetaTrader5 as mt5
+    if isinstance(candidates, str):
+        candidates = [candidates]
+    for name in candidates:
+        info = mt5.symbol_info(name)
+        if info is None:
+            continue
+        if not info.visible:
+            mt5.symbol_select(name, True)
+        return name
+    return ""
+
+
 def get_symbol_info(symbol: str):
     info = mt5.symbol_info(symbol)
     if info is None:

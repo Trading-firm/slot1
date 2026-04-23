@@ -378,7 +378,20 @@ class TradingEngine:
             StateRepo.set("balance", str(round(new_balance, 2)))
             logger.info(f"Balance updated after trade close: ${new_balance:.2f}")
 
-    def _process_market(self, symbol: str, cfg: dict, balance: float):
+    def _process_market(self, market_key: str, cfg: dict, balance: float):
+        # Resolve the actual MT5 symbol from candidates (e.g. BTCUSD vs BTCUSDm).
+        from broker.mt5_connector import resolve_symbol
+        candidates = cfg.get("symbol_candidates") or cfg.get("symbol") or market_key
+        symbol = resolve_symbol(candidates)
+        if not symbol:
+            logger.warning(
+                f"[{market_key}] No matching symbol on this account "
+                f"(tried: {candidates}) — skipping."
+            )
+            return
+
+        # Reuse cfg with resolved symbol (so downstream code doesn't have to know about candidates)
+        cfg = {**cfg, "symbol": symbol}
         logger.info(f"── Analysing {symbol} [{cfg['tf_name']}] ──")
 
         # ── New structure-trader strategy — dual orders + structural monitor + cooldown
@@ -559,7 +572,7 @@ class TradingEngine:
             logger.warning(f"[{symbol}] Trade blocked by risk — {block_reason}")
             return
 
-        self._place_dual_orders(symbol, cfg, decision.setup)
+        self._place_dual_orders(symbol, cfg, decision.setup, balance)
 
     def _manage_open_structure_trade(self, pos: dict, symbol: str, cfg: dict):
         """Route a single open position through the right monitor (A or B)."""
@@ -629,11 +642,14 @@ class TradingEngine:
                     )
                 break
 
-    def _place_dual_orders(self, symbol: str, cfg: dict, setup):
+    def _place_dual_orders(self, symbol: str, cfg: dict, setup, balance: float = 0.0):
         """
         Place trade A (main) + trade B (scalp).
         Trade A: structural SL (setup.sl), TP at min_rr target.
         Trade B: TIGHTER SL capped by trade_b_max_loss_usd, TP at +$tp_b_profit_usd.
+
+        Trade B is skipped if account balance is below `min_balance_for_b`
+        (capital protection on small accounts).
         """
         from broker.mt5_connector import place_order, get_symbol_info
 
@@ -642,6 +658,13 @@ class TradingEngine:
         lot_b       = dual.get("trade_b_lot", 0.01)
         tp_b_usd    = dual.get("trade_b_profit_usd", 2.0)
         b_max_loss  = dual.get("trade_b_max_loss_usd", 5.0)
+        min_bal_b   = dual.get("min_balance_for_b", 0.0)
+        skip_b_low_balance = balance > 0 and min_bal_b > 0 and balance < min_bal_b
+        if skip_b_low_balance:
+            logger.info(
+                f"[{symbol}] Trade B skipped — balance ${balance:.2f} < min ${min_bal_b:.2f} "
+                f"(small-account capital protection)"
+            )
 
         sym_info = get_symbol_info(symbol)
         if not sym_info:
@@ -674,7 +697,7 @@ class TradingEngine:
         # ── Trade B sized off A's ACTUAL fill price ──
         # (signal price can be stale by the time orders fill; using A's fill
         # ensures B's SL/TP are valid relative to the real entry.)
-        if tp_b_usd > 0 and lot_b > 0 and contract > 0:
+        if tp_b_usd > 0 and lot_b > 0 and contract > 0 and not skip_b_low_balance:
             # Recompute B's SL distance from the structural SL relative to actual fill
             struct_sl_dist = abs(a_fill_price - setup.sl)
             b_max_dist = b_max_loss / (lot_b * contract) if b_max_loss > 0 else struct_sl_dist

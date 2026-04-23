@@ -381,6 +381,11 @@ class TradingEngine:
     def _process_market(self, symbol: str, cfg: dict, balance: float):
         logger.info(f"── Analysing {symbol} [{cfg['tf_name']}] ──")
 
+        # ── New structure-trader strategy — dual orders + structural monitor + cooldown
+        if cfg.get("strategy") == "structure_trader":
+            self._process_structure_trader(symbol, cfg, balance)
+            return
+
         df = fetch_candles(symbol, cfg["timeframe"], count=300)
         if df.empty:
             logger.warning(f"[{symbol}] No candle data returned")
@@ -506,3 +511,192 @@ class TradingEngine:
                 f"Trade executed ({i}/{num_orders}) | {signal.direction} {symbol} | "
                 f"Lot: {sym_min_lot} | TP: {tp:.5f} | Ticket: {order['ticket']}"
             )
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # STRUCTURE TRADER (Phase 5)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _process_structure_trader(self, symbol: str, cfg: dict, balance: float):
+        """
+        Main path for strategy='structure_trader'.
+
+        Per cycle:
+          1. For any open struct_A trades: run M15 structure invalidation check.
+          2. For any open struct_B trades: run $2 profit target check.
+          3. If no open positions for this symbol AND cooldown cleared:
+             → run structure_trader.analyze, place dual orders on setup.
+        """
+        from strategies.structure_trader import analyze, cooldown_cleared
+        from broker.mt5_connector import close_order, get_symbol_info, place_order
+
+        # Step 1 & 2: manage open structure trades
+        open_for_sym = [p for p in get_open_positions(symbol) or []]
+        for pos in open_for_sym:
+            self._manage_open_structure_trade(pos, symbol, cfg)
+
+        # Refresh open positions after potential closures above
+        open_after = get_open_positions(symbol) or []
+        if open_after:
+            logger.info(f"[{symbol}] {len(open_after)} open structure position(s) — not looking for new entries.")
+            return
+
+        # Step 3: look for new signal
+        decision = analyze(symbol, cfg)
+        logger.info(f"[{symbol}] BIAS={decision.bias} | {decision.reason}")
+
+        if decision.setup is None:
+            return
+
+        # Structural cooldown
+        last_exit = StateRepo.get(f"struct_last_exit_{symbol}")
+        if not cooldown_cleared(last_exit, decision.latest_swing_time):
+            logger.info(f"[{symbol}] Cooldown active — waiting for new confirmed M15 swing since last exit.")
+            return
+
+        # Risk / balance checks
+        can_trade, block_reason = self.risk.can_trade(symbol, balance)
+        if not can_trade:
+            logger.warning(f"[{symbol}] Trade blocked by risk — {block_reason}")
+            return
+
+        self._place_dual_orders(symbol, cfg, decision.setup)
+
+    def _manage_open_structure_trade(self, pos: dict, symbol: str, cfg: dict):
+        """Route a single open position through the right monitor (A or B)."""
+        from broker.mt5_connector import close_order
+        import MetaTrader5 as mt5
+
+        # Find the DB trade record to know role + invalidation
+        db_open = TradeRepo.get_open_trades()
+        trade = next((t for t in db_open if t.get("ticket") == pos["ticket"]), None)
+        if trade is None:
+            return  # not tracked — could be manual trade, skip
+
+        role = trade.get("trade_role", "A")
+
+        # ── TRADE B — close on $2 profit target ──
+        if role == "B":
+            target = trade.get("tp_b_profit_usd", 0)
+            if target > 0 and pos.get("profit", 0) >= target:
+                tick = mt5.symbol_info_tick(symbol)
+                close_price = (tick.bid if pos["direction"] == "BUY" else tick.ask) if tick else None
+                if close_order(pos["ticket"], symbol, pos["direction"], pos["lot_size"]):
+                    logger.info(f"[{symbol}] struct_B TARGET HIT ${pos['profit']:.2f} >= ${target}")
+                    self._record_manual_close(trade, close_price, "Trade B target")
+                    StateRepo.set(f"struct_last_exit_{symbol}", datetime.now(timezone.utc).isoformat())
+                    # ★ When B hits target: move A's SL to breakeven so A can no longer lose.
+                    self._move_a_to_breakeven(symbol, trade["direction"], trade["entry_price"])
+            return
+
+        # ── TRADE A — M15 structure-break monitor ──
+        inv = trade.get("invalidation_price")
+        if not inv:
+            return
+        df_m15 = fetch_candles(symbol, mt5.TIMEFRAME_M15, count=10)
+        if df_m15.empty or len(df_m15) < 2:
+            return
+        last_close = float(df_m15["Close"].iloc[-2])   # last CLOSED bar
+        broke = False
+        if pos["direction"] == "BUY"  and last_close < inv: broke = True
+        if pos["direction"] == "SELL" and last_close > inv: broke = True
+        if broke:
+            tick = mt5.symbol_info_tick(symbol)
+            close_price = (tick.bid if pos["direction"] == "BUY" else tick.ask) if tick else None
+            if close_order(pos["ticket"], symbol, pos["direction"], pos["lot_size"]):
+                logger.info(
+                    f"[{symbol}] struct_A STRUCTURE INVALIDATED — "
+                    f"last M15 close ${last_close:.2f} beyond invalidation ${inv:.2f}"
+                )
+                self._record_manual_close(trade, close_price, "M15 structure invalidated")
+                StateRepo.set(f"struct_last_exit_{symbol}", datetime.now(timezone.utc).isoformat())
+
+    def _move_a_to_breakeven(self, symbol: str, direction: str, entry_price: float):
+        """
+        Find the matching open struct_A position for this symbol/direction and
+        move its SL to entry (plus a tiny buffer to lock a cent of profit).
+        Called right after struct_B hits its target.
+        """
+        from broker.mt5_connector import update_stops
+        buffer = 0.10   # $0.10 buffer in direction of trade
+        new_sl = entry_price + buffer if direction == "BUY" else entry_price - buffer
+
+        for p in get_open_positions(symbol) or []:
+            if p.get("comment", "").startswith("struct_A") and p["direction"] == direction:
+                if update_stops(p["ticket"], symbol, new_sl, p["tp"]):
+                    logger.info(
+                        f"[{symbol}] struct_A SL moved to BE (entry {entry_price:.2f} → SL {new_sl:.2f}) "
+                        f"because struct_B just hit target"
+                    )
+                break
+
+    def _place_dual_orders(self, symbol: str, cfg: dict, setup):
+        """
+        Place trade A (main) + trade B (scalp).
+        Trade A: structural SL (setup.sl), TP at min_rr target.
+        Trade B: TIGHTER SL capped by trade_b_max_loss_usd, TP at +$tp_b_profit_usd.
+        """
+        from broker.mt5_connector import place_order, get_symbol_info
+
+        dual = cfg.get("dual_trade", {})
+        lot_a       = dual.get("trade_a_lot", 0.01)
+        lot_b       = dual.get("trade_b_lot", 0.01)
+        tp_b_usd    = dual.get("trade_b_profit_usd", 2.0)
+        b_max_loss  = dual.get("trade_b_max_loss_usd", 5.0)
+
+        sym_info = get_symbol_info(symbol)
+        if not sym_info:
+            logger.error(f"[{symbol}] No symbol info — cannot size orders")
+            return
+
+        contract = sym_info.trade_contract_size
+
+        logger.info(
+            f"[{symbol}] STRUCTURE SETUP ({setup.scenario}) | {setup.direction} | "
+            f"signal entry≈${setup.entry_price:.2f} | "
+            f"A: SL ${setup.sl:.2f} TP ${setup.tp_a:.2f}"
+        )
+
+        # ── Place Trade A first — at structural SL/TP ──
+        order_a = place_order(symbol, setup.direction, lot_a, setup.sl, setup.tp_a, comment="struct_A")
+        if not order_a:
+            return  # A failed → don't bother with B
+
+        a_fill_price = order_a["price"]
+        TradeRepo.open_trade_struct(
+            symbol=symbol, direction=setup.direction,
+            entry_price=a_fill_price, sl=setup.sl, tp=setup.tp_a, lot_size=lot_a,
+            ticket=order_a["ticket"], strategy="structure_trader",
+            timeframe=cfg.get("tf_name", "M15"),
+            trade_role="A", invalidation_price=setup.invalidation_price,
+            tp_b_profit_usd=0.0, scenario=setup.scenario,
+        )
+
+        # ── Trade B sized off A's ACTUAL fill price ──
+        # (signal price can be stale by the time orders fill; using A's fill
+        # ensures B's SL/TP are valid relative to the real entry.)
+        if tp_b_usd > 0 and lot_b > 0 and contract > 0:
+            # Recompute B's SL distance from the structural SL relative to actual fill
+            struct_sl_dist = abs(a_fill_price - setup.sl)
+            b_max_dist = b_max_loss / (lot_b * contract) if b_max_loss > 0 else struct_sl_dist
+            b_sl_dist = min(struct_sl_dist, b_max_dist)
+            b_sl = (a_fill_price - b_sl_dist) if setup.direction == "BUY" else (a_fill_price + b_sl_dist)
+
+            tp_b_dist = tp_b_usd / (lot_b * contract)
+            tp_b_price = (a_fill_price + tp_b_dist) if setup.direction == "BUY" \
+                         else (a_fill_price - tp_b_dist)
+
+            logger.info(
+                f"[{symbol}] B sized off A fill ${a_fill_price:.2f} | "
+                f"B: SL ${b_sl:.2f} (cap ${b_max_loss}) TP ${tp_b_price:.2f} (+${tp_b_usd})"
+            )
+
+            order_b = place_order(symbol, setup.direction, lot_b, b_sl, tp_b_price, comment="struct_B")
+            if order_b:
+                TradeRepo.open_trade_struct(
+                    symbol=symbol, direction=setup.direction,
+                    entry_price=order_b["price"], sl=b_sl, tp=tp_b_price, lot_size=lot_b,
+                    ticket=order_b["ticket"], strategy="structure_trader",
+                    timeframe=cfg.get("tf_name", "M15"),
+                    trade_role="B", invalidation_price=setup.invalidation_price,
+                    tp_b_profit_usd=tp_b_usd, scenario=setup.scenario,
+                )

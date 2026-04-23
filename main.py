@@ -23,15 +23,24 @@ def run():
     logger.info("  UNIFIED TRADING BOT — STARTING")
     logger.info(f"  Markets    : {len(MARKETS)} active")
     for name, cfg in MARKETS.items():
-        sessions = cfg.get("filters", {}).get("sessions", [])
-        sess_str = ", ".join(
-            f"{s['start']:02d}h-{s['end']:02d}h" for s in sessions
-        ) if sessions else "24/7"
-        logger.info(
-            f"  {name:<25} | {cfg['tf_name']:<4} | "
-            f"ADX>={cfg['filters'].get('adx_min',20):<3} | "
-            f"Sessions: {sess_str}"
-        )
+        strategy = cfg.get("strategy", "?")
+        if strategy == "structure_trader":
+            dual = cfg.get("dual_trade", {})
+            logger.info(
+                f"  {name:<25} | {cfg['tf_name']:<4} | strategy={strategy} | "
+                f"lot_A={dual.get('trade_a_lot')} lot_B={dual.get('trade_b_lot')} "
+                f"tp_B=${dual.get('trade_b_profit_usd')} max_loss_B=${dual.get('trade_b_max_loss_usd')}"
+            )
+        else:
+            sessions = cfg.get("filters", {}).get("sessions", [])
+            sess_str = ", ".join(
+                f"{s['start']:02d}h-{s['end']:02d}h" for s in sessions
+            ) if sessions else "24/7"
+            logger.info(
+                f"  {name:<25} | {cfg['tf_name']:<4} | "
+                f"ADX>={cfg.get('filters', {}).get('adx_min', 20):<3} | "
+                f"Sessions: {sess_str}"
+            )
     logger.info(f"  Risk/Trade : {settings.RISK_PER_TRADE*100:.1f}%")
     logger.info(f"  Max Trades : {settings.MAX_OPEN_TRADES}")
     logger.info(f"  Daily Stop : {settings.MAX_DAILY_LOSS*100:.1f}%")

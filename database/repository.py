@@ -70,6 +70,52 @@ class TradeRepo:
         return doc
 
     @staticmethod
+    def open_trade_struct(
+        symbol:             str,
+        direction:          str,
+        entry_price:        float,
+        sl:                 float,
+        tp:                 float,
+        lot_size:           float,
+        ticket:             int,
+        strategy:           str,
+        timeframe:          str,
+        trade_role:         str,        # "A" or "B"
+        invalidation_price: float,      # M15 structure break level (used by monitor)
+        tp_b_profit_usd:    float,      # Trade-B profit target ($ at lot size)
+        scenario:           str,        # entry scenario (trend_pullback / range_reversal / range_breakout)
+    ) -> dict:
+        """Open a structure-trader trade. Stores extra fields the monitor needs."""
+        doc = {
+            "symbol":             symbol,
+            "direction":          direction,
+            "entry_price":        entry_price,
+            "sl":                 sl,
+            "tp":                 tp,
+            "lot_size":           lot_size,
+            "ticket":             ticket,
+            "strategy":           strategy,
+            "timeframe":          timeframe,
+            "trade_role":         trade_role,
+            "invalidation_price": invalidation_price,
+            "tp_b_profit_usd":    tp_b_profit_usd,
+            "scenario":           scenario,
+            "status":             "OPEN",
+            "exit_price":         None,
+            "exit_reason":        None,
+            "pnl":                None,
+            "pnl_pct":            None,
+            "entry_time":         datetime.now(timezone.utc),
+            "exit_time":          None,
+        }
+        trades_col().document(str(ticket)).set(doc)
+        logger.info(
+            f"Trade opened (struct_{trade_role}) | {direction} {symbol} @ {entry_price:.5f} | "
+            f"SL: {sl:.5f} | TP: {tp:.5f} | inv: {invalidation_price:.5f} | Ticket: {ticket}"
+        )
+        return doc
+
+    @staticmethod
     def close_trade(
         ticket:      int,
         exit_price:  float,

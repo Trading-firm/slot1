@@ -1,121 +1,84 @@
 """
 config/markets.py
 ─────────────────
-Momentum candle scalper on Exness — XAUUSD + BTCUSD.
+Structure-based trader on BTCUSD.
 
-Winning configs from 90-day sweeps with spread modeled:
+Strategy 'structure_trader' pipeline:
+  1. MTF bias — H4 leads, H1 vetoes conflicts (NEVER against bigger TF trend)
+  2. Level memory — swings + range bounds persisted to data/levels.db
+  3. Entry engine — pure price action (no candlestick body checks):
+       • trend_pullback — H4 trending + M15 new higher/lower swing formed
+       • range_reversal — H4 ranging + M15 higher/lower swing AT a bound
+       • range_breakout — price CLOSED beyond H4 range bound
+  4. Dual-trade execution:
+       • struct_A (main) — 1:2 R:R target (capped at structural levels if closer)
+                           Active M15 structure-break monitor closes early on invalidation
+       • struct_B ($2 scalp) — TIGHTER SL (max $5 loss), closes at +$2 P/L
+       • When B hits target, A's SL moves to breakeven
+  5. Structural cooldown — no re-entry until a new confirmed M15 swing forms after last exit
 
-  XAUUSD (gold) — scripts/gold_scalper_sweep.py
-    M15 | body >= 0.75 | R:R = 1:1.5 | EMA8 filter ON | min_range >= 25*spread | 24/5
-    WR 43.3%, ~3 T/D, +0.07R exp, +$1,036/90d @ 0.01 lot (spread $0.155)
-    (Tightened from 1:2.5 for more frequent smaller wins per user preference)
+BTC note: wider M15 ATR (~$270 vs gold's $12) means structural SLs are naturally
+wider in price terms but similar in $ terms at 0.01 lot. Spread $6 is much wider than
+gold's $0.15 — not a scalper concern at M15 structure timing.
 
-  BTCUSD — scripts/btc_scalper_sweep.py + btc_fixed_target_backtest.py
-    M15 | body >= 0.75 | R:R = 1:1.0 | EMA8 filter OFF | min_range >= 5*spread | 24/7
-    WR 54.9%, ~6 T/D, +$306.80/90d @ 0.01 lot (spread $6.00)
-    (Tightened from 1:1.5 — user wants more frequent wins; 1:1.0 keeps the math honest)
-
-Combined projection: ~6.8 T/D, ~45% WR, ~$1,893/90d @ 0.01 lot per market.
-
-Strategy type: momentum candle trigger.
-  - Strong-bodied candle (body >= body_min_pct of range, larger than avg of prior 5)
-  - Close in the upper/lower 1/3 of the range (direction confirmed)
-  - Range >= min_range_x_spread × spread (skip small bars)
-  - Optional EMA8 alignment (per market)
-  - Structural SL: prior candle low/high -/+ 0.1*ATR buffer
-  - TP: SL_distance × rr_ratio
-
-Entry: next bar open (market order).
-Close: SL or TP broker-side. No trailing, no early exit.
+Editable per market:
+  dual_trade.trade_a_lot / trade_b_lot     lot sizes
+  dual_trade.trade_b_profit_usd            scalp target in $  (0 = disable B)
+  dual_trade.trade_b_max_loss_usd          Trade B's max loss cap
+  entry.min_rr                             R:R target for A (default 2.0)
+  entry.max_sl_usd                         reject setups exceeding this A-loss cap
+  entry.min_sl_atr                         floor SL at this × ATR  (0 = off)
 """
 import MetaTrader5 as mt5
 
 MARKETS = {
 
-    # ── XAUUSD (Gold) — Momentum Candle Scalper ─────────────────────────────
-    "XAUUSD": {
-        "symbol":    "XAUUSD",
-        "timeframe": mt5.TIMEFRAME_M15,
-        "tf_name":   "M15",
-        "strategy":  "scalper",
-        "filters": {
-            "body_min_pct":       0.75,   # candle body >= 75% of range
-            "body_lookback":      5,
-            "close_extremity":    1/3,    # close in upper/lower 1/3
-            "min_range_x_spread": 25,     # range >= 25x spread (skip small candles)
-            "use_ema_filter":     True,
-            "ema_period":         8,
-            "sl_buffer_atr":      0.1,    # SL = candle low/high +/- 0.1*ATR
-            "rr_ratio":           1.5,    # TP = SL_dist * 1.5 (backtest winner)
-            # Fixed $ profit target removed — verified via backtest it LOSES money
-            # (avg SL $19 >> $5.60 TP means 65% WR still net negative).
-            "atr_period":         14,
-            "sessions":           [],     # 24/5 (gold closed weekends anyway)
-        },
-        "min_lot":      0.01,   # Exness min; $1 per $1 move
-        # exit_at_profit_usd disabled — momentum-exit now handles profit-taking
-        # "exit_at_profit_usd": 9.60,
-
-        # Momentum-ride-and-escape exit — RELAXED thresholds (Fix A1)
-        # Backtest: +$536/90d vs previous +$388 by holding through natural pullbacks.
-        # Addresses the "entered-at-peak -> retracement -> BE exit" problem.
-        #   weak_body < 0.25     -> only truly dead candles count as weak
-        #   in profit (>=$1)     -> close immediately
-        #   at BE (+/- $1)       -> close
-        #   small loss (up to -$5) -> hold for recovery (was -$3)
-        #   big loss              -> let structural SL handle
-        "weak_exit_enabled":     True,
-        "weak_body_threshold":   0.25,
-        "be_tolerance_usd":      1.00,
-        "small_loss_limit_usd":  5.00,
-
-        "atr_period":   14,
-        "swing_window": 10,
-    },
-
-    # ── BTCUSD — Trend-Aware Momentum Scalper ──────────────────────────────
-    # Backtest: trend filter turns +$432 into +$1,227 / 90d (43% WR, 1.4 T/D)
-    # BTC trends persist, so riding with the trend + escaping when trend dies
-    # is dramatically more profitable than raw scalping.
+    # ── BTCUSD — Structure-based trader ─────────────────────────────────────
     "BTCUSD": {
         "symbol":    "BTCUSD",
         "timeframe": mt5.TIMEFRAME_M15,
         "tf_name":   "M15",
-        "strategy":  "scalper",
-        "filters": {
-            "body_min_pct":       0.75,
-            "body_lookback":      5,
-            "close_extremity":    1/3,
-            "min_range_x_spread": 5,
-            "use_ema_filter":     False,  # EMA8 filter hurt BTC in raw scalping
-            "ema_period":         8,
-            "sl_buffer_atr":      0.1,
-            "rr_ratio":           1.0,
-            "atr_period":         14,
-            "sessions":           [],     # 24/7
+        "strategy":  "structure_trader",
 
-            # Trend filter (BACKTESTED WINNER for BTC)
-            #   Only enter BUY when price > EMA50 > EMA200 AND ADX >= 15
-            #   Only enter SELL when price < EMA50 < EMA200 AND ADX >= 15
-            "trend_filter_enabled": True,
-            "trend_adx_min":        15,
+        # Dual-trade execution — ALWAYS places 2 orders per signal
+        "dual_trade": {
+            "trade_a_lot":            0.01,
+            "trade_b_lot":            0.01,
+            "trade_b_profit_usd":     2.00,    # $2 scalp (0 = disable trade B)
+            "trade_b_max_loss_usd":   3.00,    # tightened from $5 — B's avg loss must be < avg win
         },
-        "min_lot":      0.04,
-        # exit_at_profit_usd disabled — momentum+trend exit handles profit-taking
-        # "exit_at_profit_usd": 5.60,
 
-        # Trend-aware exit:
-        #   Trend still UP/DOWN in our favor  -> HOLD (ride it)
-        #   Trend reversed                    -> CLOSE immediately
-        #   Trend weak + candle weak + profit -> CLOSE
-        #   Trend weak + candle weak + BE     -> CLOSE
-        #   Trend weak + small loss           -> WAIT for recovery
-        "weak_exit_enabled":     True,
-        "weak_body_threshold":   0.40,   # lowered since trend now dominates the hold logic
-        "be_tolerance_usd":      0.25,
-        "small_loss_limit_usd":  3.00,
+        # Entry engine thresholds
+        "entry": {
+            "min_rr":               2.0,
+            "min_sl_atr":           0.3,
+            "max_sl_usd":           15.0,
+            "near_bound_atr":       1.5,
+            "swing_near_bound_atr": 2.5,
+            "max_lookback_bars":    30,
+            "breakout_lookback_min":30,
+            "tp_b_profit_usd":      2.00,
+            # Scenario kill-switches (backtest showed these as net-negative)
+            "enable_trend_pullback":  False,
+            "enable_range_breakout":  False,
+            "enable_range_reversal":  True,
+            "enable_level_touch":     True,
+            # Quality filter: only trade levels that have been tested at least N times
+            # before our entry attempt (proven S/R, not random new dips/rallies).
+            "min_prior_touches":     1,
+        },
 
-        "atr_period":   14,
-        "swing_window": 10,
+        # Structure detection thresholds
+        "structure": {
+            "h4_range_band_pct":    4.0,    # BTC ranges are wider — 4% band for H4
+            "h1_range_band_pct":    2.5,
+            "m15_range_band_pct":   2.0,
+            "swing_left":           5,
+            "swing_right":          5,
+            "min_swings":           3,
+            "h4_bars":              400,
+            "h1_bars":              500,
+            "m15_bars":             500,
+        },
     },
 }

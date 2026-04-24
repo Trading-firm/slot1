@@ -34,6 +34,7 @@ SCENARIO_TREND_PULLBACK = "trend_pullback"
 SCENARIO_RANGE_REVERSAL = "range_reversal"
 SCENARIO_RANGE_BREAKOUT = "range_breakout"
 SCENARIO_LEVEL_TOUCH    = "level_touch"
+SCENARIO_SWEEP_RECLAIM  = "sweep_reclaim"
 
 
 @dataclass
@@ -60,6 +61,28 @@ def _atr(df: pd.DataFrame, period: int = 14) -> float:
         tr = max(high[i] - low[i], abs(high[i] - close_prev[i]), abs(low[i] - close_prev[i]))
         trs.append(tr)
     return sum(trs) / len(trs) if trs else 0.0
+
+
+def _in_session(bar_time, sessions) -> bool:
+    """
+    sessions: list of [start_hour, end_hour] UTC pairs. None/empty = always on.
+    Handles wrap-around (e.g., [[22, 6]] = 22:00-06:00 UTC).
+    """
+    if not sessions:
+        return True
+    try:
+        hour = int(bar_time.hour)
+    except AttributeError:
+        return True
+    for sess in sessions:
+        start, end = int(sess[0]), int(sess[1])
+        if start <= end:
+            if start <= hour < end:
+                return True
+        else:
+            if hour >= start or hour < end:
+                return True
+    return False
 
 
 def _detect_trend_pullback(
@@ -323,6 +346,117 @@ def _count_prior_touches(df: pd.DataFrame, swing_idx: int, swing_price: float,
     return count
 
 
+def _detect_sweep_reclaim(
+    mtf: MTFReport,
+    level_memory: LevelMemory,
+    df_m15: pd.DataFrame,
+    symbol: str,
+    sl_buffer_atr:       float = 0.2,
+    max_lookback_bars:   int   = 30,
+    swing_left:          int   = 5,
+    swing_right:         int   = 5,
+    min_rr:              float = 1.5,
+    tp_b_usd:            float = 2.0,
+    min_prior_touches:   int   = 1,
+    min_body_ratio:      float = 0.4,     # close in top/bottom (1-min_body_ratio) of bar
+    min_sweep_atr:       float = 0.1,     # wick must sweep past level by at least this
+) -> Optional[EntrySetup]:
+    """
+    Liquidity-sweep reversal: price wicked past a recent swing level AND closed back
+    through it. Classic stop-hunt rejection — the highest-WR pattern on crypto M15.
+
+    BUY:  bar_low  < swing_low  AND bar_close > swing_low  AND close in upper portion
+    SELL: bar_high > swing_high AND bar_close < swing_high AND close in lower portion
+
+    SL goes below the sweep wick (not just the swing) so the "trap" can't be re-set
+    without stopping us out legitimately.
+    """
+    atr = _atr(df_m15)
+    if atr <= 0:
+        return None
+    sl_buf = atr * sl_buffer_atr
+    min_sweep = atr * min_sweep_atr
+
+    bar_high  = float(df_m15["High"].iloc[-2])
+    bar_low   = float(df_m15["Low"].iloc[-2])
+    bar_close = float(df_m15["Close"].iloc[-2])
+    bar_range = bar_high - bar_low
+    if bar_range <= 0:
+        return None
+    close_pos = (bar_close - bar_low) / bar_range   # 0=at low, 1=at high
+
+    swings = find_swing_points(df_m15, left=swing_left, right=swing_right)
+    recent = [s for s in swings if len(df_m15) - 1 - s.idx <= max_lookback_bars]
+    touch_tol = atr * 0.3   # for prior-touch counting
+
+    # ── BUY sweep (BUY bias or RANGE) ──
+    if mtf.bias in (BIAS_BUY, BIAS_RANGE) and close_pos >= (1.0 - min_body_ratio):
+        for sw in reversed([s for s in recent if s.kind == "LOW"]):
+            swept_by = sw.price - bar_low
+            if swept_by < min_sweep:
+                continue
+            if bar_close <= sw.price:
+                continue
+            if min_prior_touches > 0:
+                touches = _count_prior_touches(
+                    df_m15.iloc[:-1], sw.idx, sw.price, "LOW", touch_tol,
+                )
+                if touches < min_prior_touches:
+                    continue
+            if mtf.bias == BIAS_RANGE and mtf.range_bounds:
+                # Only accept sweeps in the lower half of the range
+                if sw.price > (mtf.range_bounds[0] + mtf.range_bounds[1]) / 2:
+                    continue
+            entry = bar_close
+            sl    = bar_low - sl_buf
+            sl_dist = entry - sl
+            if sl_dist <= 0:
+                continue
+            tp_a = entry + sl_dist * min_rr
+            return EntrySetup(
+                direction="BUY", entry_price=entry, sl=sl, tp_a=tp_a,
+                tp_b_profit_usd=tp_b_usd,
+                invalidation_price=sw.price,
+                scenario=SCENARIO_SWEEP_RECLAIM,
+                reason=(f"BUY sweep-reclaim: swept swing-low ${sw.price:.2f} to ${bar_low:.2f}, "
+                        f"closed ${bar_close:.2f} ({close_pos*100:.0f}% of bar)"),
+            )
+
+    # ── SELL sweep (SELL bias or RANGE) ──
+    if mtf.bias in (BIAS_SELL, BIAS_RANGE) and close_pos <= min_body_ratio:
+        for sw in reversed([s for s in recent if s.kind == "HIGH"]):
+            swept_by = bar_high - sw.price
+            if swept_by < min_sweep:
+                continue
+            if bar_close >= sw.price:
+                continue
+            if min_prior_touches > 0:
+                touches = _count_prior_touches(
+                    df_m15.iloc[:-1], sw.idx, sw.price, "HIGH", touch_tol,
+                )
+                if touches < min_prior_touches:
+                    continue
+            if mtf.bias == BIAS_RANGE and mtf.range_bounds:
+                if sw.price < (mtf.range_bounds[0] + mtf.range_bounds[1]) / 2:
+                    continue
+            entry = bar_close
+            sl    = bar_high + sl_buf
+            sl_dist = sl - entry
+            if sl_dist <= 0:
+                continue
+            tp_a = entry - sl_dist * min_rr
+            return EntrySetup(
+                direction="SELL", entry_price=entry, sl=sl, tp_a=tp_a,
+                tp_b_profit_usd=tp_b_usd,
+                invalidation_price=sw.price,
+                scenario=SCENARIO_SWEEP_RECLAIM,
+                reason=(f"SELL sweep-reclaim: swept swing-high ${sw.price:.2f} to ${bar_high:.2f}, "
+                        f"closed ${bar_close:.2f} ({close_pos*100:.0f}% of bar)"),
+            )
+
+    return None
+
+
 def _detect_level_touch(
     mtf: MTFReport,
     level_memory: LevelMemory,
@@ -336,6 +470,7 @@ def _detect_level_touch(
     min_rr:              float = 2.0,
     tp_b_usd:            float = 2.0,
     min_prior_touches:   int   = 1,        # require level was tested at least N times before
+    min_body_ratio:      float = 0.4,      # close in top/bottom (1-min_body_ratio) of bar
 ) -> Optional[EntrySetup]:
     """
     Fires on the FIRST CONTACT with an S/R level, not after a new swing forms.
@@ -355,6 +490,10 @@ def _detect_level_touch(
     last_high  = float(df_m15["High"].iloc[-2])   # last CLOSED bar
     last_low   = float(df_m15["Low"].iloc[-2])
     last_close = float(df_m15["Close"].iloc[-2])
+    bar_range  = last_high - last_low
+    if bar_range <= 0:
+        return None
+    close_pos = (last_close - last_low) / bar_range   # 0=at low, 1=at high
 
     swings = find_swing_points(df_m15, left=swing_left, right=swing_right)
     recent = [s for s in swings if len(df_m15) - 1 - s.idx <= max_lookback_bars]
@@ -362,7 +501,8 @@ def _detect_level_touch(
     swing_highs = [s for s in recent if s.kind == "HIGH"]
 
     # ── BUY branch (only in BIAS_BUY or BIAS_RANGE) ──
-    if mtf.bias in (BIAS_BUY, BIAS_RANGE):
+    # Close must be in upper (1-min_body_ratio) of bar — strong rejection, not weak touch
+    if mtf.bias in (BIAS_BUY, BIAS_RANGE) and close_pos >= (1.0 - min_body_ratio):
         for sw in reversed(swing_lows):   # most recent first
             # Bar tested the swing low AND closed above it (rejection)
             if last_low <= sw.price + tol and last_close > sw.price:
@@ -384,19 +524,20 @@ def _detect_level_touch(
                     # swing must be in lower half of range (closer to support)
                     if sw.price > (mtf.range_bounds[0] + mtf.range_bounds[1]) / 2:
                         continue
-                target_tp = entry + sl_dist * min_rr
-                candidate = level_memory.get_nearest(symbol, entry, "above", timeframe="H4")
-                tp_a = min(candidate.price, target_tp) if (candidate and candidate.price < target_tp) else target_tp
+                # TP = exact min_rr target. No nearest-level capping — that caused
+                # sub-1R TPs that lose money to spread. Rely on the structural
+                # invalidation monitor to exit early if thesis breaks.
+                tp_a = entry + sl_dist * min_rr
                 return EntrySetup(
                     direction="BUY", entry_price=entry, sl=sl, tp_a=tp_a,
                     tp_b_profit_usd=tp_b_usd,
                     invalidation_price=sw.price,
                     scenario=SCENARIO_LEVEL_TOUCH,
-                    reason=f"BUY bounce off M15 swing low ${sw.price:.2f} (bar low ${last_low:.2f} close ${last_close:.2f})",
+                    reason=f"BUY bounce off M15 swing low ${sw.price:.2f} (bar low ${last_low:.2f} close ${last_close:.2f}, {close_pos*100:.0f}% of bar)",
                 )
 
     # ── SELL branch (only in BIAS_SELL or BIAS_RANGE) ──
-    if mtf.bias in (BIAS_SELL, BIAS_RANGE):
+    if mtf.bias in (BIAS_SELL, BIAS_RANGE) and close_pos <= min_body_ratio:
         for sw in reversed(swing_highs):
             if last_high >= sw.price - tol and last_close < sw.price:
                 if min_prior_touches > 0:
@@ -414,15 +555,13 @@ def _detect_level_touch(
                     # swing must be in upper half of range
                     if sw.price < (mtf.range_bounds[0] + mtf.range_bounds[1]) / 2:
                         continue
-                target_tp = entry - sl_dist * min_rr
-                candidate = level_memory.get_nearest(symbol, entry, "below", timeframe="H4")
-                tp_a = max(candidate.price, target_tp) if (candidate and candidate.price > target_tp) else target_tp
+                tp_a = entry - sl_dist * min_rr
                 return EntrySetup(
                     direction="SELL", entry_price=entry, sl=sl, tp_a=tp_a,
                     tp_b_profit_usd=tp_b_usd,
                     invalidation_price=sw.price,
                     scenario=SCENARIO_LEVEL_TOUCH,
-                    reason=f"SELL rejection off M15 swing high ${sw.price:.2f} (bar high ${last_high:.2f} close ${last_close:.2f})",
+                    reason=f"SELL rejection off M15 swing high ${sw.price:.2f} (bar high ${last_high:.2f} close ${last_close:.2f}, {close_pos*100:.0f}% of bar)",
                 )
 
     return None
@@ -437,29 +576,54 @@ def find_entry(
 ) -> Optional[EntrySetup]:
     """
     Orchestrator. Picks the right scenario for the current bias.
-    Breakout is checked first (strongest signal). Then reversal at bound. Then pullback.
+
+    Scenario priority (highest WR first):
+      1. sweep_reclaim  — stop-hunt reversal (crypto's highest-WR pattern)
+      2. level_touch    — standard S/R rejection
+      3. range_reversal — only in H4 RANGE regime
+      4. range_breakout / trend_pullback — disabled by default (historically net-negative)
+
+    Session filter (cfg['sessions']) blocks ALL scenarios outside London/NY hours
+    where crypto M15 tends to chop.
     """
     if mtf.bias == BIAS_NEUTRAL:
         return None
 
     cfg = cfg or {}
     tp_b_usd = cfg.get("tp_b_profit_usd", 2.0)
-    min_rr   = cfg.get("min_rr", 3.0)
+    min_rr   = cfg.get("min_rr", 1.5)
     near_bound_atr       = cfg.get("near_bound_atr", 1.5)
     swing_near_bound_atr = cfg.get("swing_near_bound_atr", 2.5)
     max_lookback_bars    = cfg.get("max_lookback_bars", 30)
     breakout_lookback_min = cfg.get("breakout_lookback_min", 30)
+    min_prior_touches    = cfg.get("min_prior_touches", 2)
+    min_body_ratio       = cfg.get("min_body_ratio", 0.4)
+    sl_buffer_atr_sweep  = cfg.get("sl_buffer_atr_sweep", 0.2)
+    min_sweep_atr        = cfg.get("min_sweep_atr", 0.1)
 
-    # Per-scenario kill switches (default ON for backwards compat)
-    enable_breakout = cfg.get("enable_range_breakout", True)
+    # Session filter — reject entries outside configured UTC hours
+    sessions = cfg.get("sessions", [])
+    if sessions and "time" in df_m15.columns and len(df_m15) >= 2:
+        bar_time = df_m15["time"].iloc[-2]
+        if not _in_session(bar_time, sessions):
+            return None
+
+    # Per-scenario kill switches
+    enable_sweep    = cfg.get("enable_sweep_reclaim",  True)
     enable_touch    = cfg.get("enable_level_touch",    True)
-    enable_reversal = cfg.get("enable_range_reversal", True)
-    enable_pullback = cfg.get("enable_trend_pullback", True)
+    enable_reversal = cfg.get("enable_range_reversal", False)
+    enable_breakout = cfg.get("enable_range_breakout", False)
+    enable_pullback = cfg.get("enable_trend_pullback", False)
 
-    if enable_breakout:
-        setup = _detect_range_breakout(
+    if enable_sweep:
+        setup = _detect_sweep_reclaim(
             mtf, level_memory, df_m15, symbol,
-            breakout_lookback_min=breakout_lookback_min, min_rr=min_rr, tp_b_usd=tp_b_usd,
+            sl_buffer_atr=sl_buffer_atr_sweep,
+            max_lookback_bars=max_lookback_bars,
+            min_rr=min_rr, tp_b_usd=tp_b_usd,
+            min_prior_touches=min_prior_touches,
+            min_body_ratio=min_body_ratio,
+            min_sweep_atr=min_sweep_atr,
         )
         if setup: return setup
 
@@ -467,7 +631,8 @@ def find_entry(
         setup = _detect_level_touch(
             mtf, level_memory, df_m15, symbol,
             max_lookback_bars=max_lookback_bars, min_rr=min_rr, tp_b_usd=tp_b_usd,
-            min_prior_touches=cfg.get("min_prior_touches", 1),
+            min_prior_touches=min_prior_touches,
+            min_body_ratio=min_body_ratio,
         )
         if setup: return setup
 
@@ -476,6 +641,13 @@ def find_entry(
             mtf, level_memory, df_m15, symbol,
             near_bound_atr=near_bound_atr, swing_near_bound_atr=swing_near_bound_atr,
             max_lookback_bars=max_lookback_bars, min_rr=min_rr, tp_b_usd=tp_b_usd,
+        )
+        if setup: return setup
+
+    if enable_breakout:
+        setup = _detect_range_breakout(
+            mtf, level_memory, df_m15, symbol,
+            breakout_lookback_min=breakout_lookback_min, min_rr=min_rr, tp_b_usd=tp_b_usd,
         )
         if setup: return setup
 

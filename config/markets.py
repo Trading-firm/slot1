@@ -1,7 +1,7 @@
 """
 config/markets.py
 ─────────────────
-Structure-based trader on BTCUSD.
+Structure-based trader across BTCUSD + forex majors + gold.
 
 Strategy 'structure_trader' pipeline:
   1. MTF bias — H4 leads, H1 vetoes conflicts (NEVER against bigger TF trend)
@@ -87,6 +87,262 @@ MARKETS = {
             "h4_range_band_pct":    4.0,    # BTC ranges are wider — 4% band for H4
             "h1_range_band_pct":    2.5,
             "m15_range_band_pct":   2.0,
+            "swing_left":           5,
+            "swing_right":          5,
+            "min_swings":           3,
+            "h4_bars":              400,
+            "h1_bars":              500,
+            "m15_bars":             500,
+        },
+    },
+
+    # ── XAUUSD (Gold) — Structure-based trader ──────────────────────────────
+    # Gold respects swing structure cleanly on M15. Wider ranges than forex.
+    # 0.01 lot ≈ 1 oz → $1 move = $1 P/L.
+    "XAUUSD": {
+        "symbol_candidates": ["XAUUSD", "XAUUSDm", "XAUUSDc", "GOLD"],
+        "symbol":    "XAUUSD",
+        "timeframe": mt5.TIMEFRAME_M15,
+        "tf_name":   "M15",
+        "strategy":  "structure_trader",
+
+        "dual_trade": {
+            "trade_a_lot":            0.01,
+            "trade_b_lot":            0.01,
+            "trade_b_profit_usd":     2.00,
+            "trade_b_max_loss_usd":   0,
+            "min_balance_for_b":      100.0,
+        },
+
+        "entry": {
+            "min_rr":               1.0,
+            "min_sl_atr":           0.5,
+            "max_sl_usd":           10.0,
+            "near_bound_atr":       1.5,
+            "swing_near_bound_atr": 2.5,
+            "max_lookback_bars":    30,
+            "breakout_lookback_min":30,
+            "tp_b_profit_usd":      2.00,
+            "sessions":             [[8, 22]],
+            "enable_sweep_reclaim":   True,
+            "enable_level_touch":     True,
+            "enable_range_reversal":  False,
+            "enable_range_breakout":  False,
+            "enable_trend_pullback":  False,
+            "min_prior_touches":     2,
+            "min_body_ratio":        0.4,
+            "sl_buffer_atr_sweep":   0.2,
+            "min_sweep_atr":         0.1,
+        },
+
+        "structure": {
+            "h4_range_band_pct":    2.5,
+            "h1_range_band_pct":    1.5,
+            "m15_range_band_pct":   1.0,
+            "swing_left":           5,
+            "swing_right":          5,
+            "min_swings":           3,
+            "h4_bars":              400,
+            "h1_bars":              500,
+            "m15_bars":             500,
+        },
+    },
+
+    # ── EURUSD — Structure-based trader ─────────────────────────────────────
+    # Cleanest M15 structure among majors, tightest spread. 0.01 lot → 1 pip = $0.10.
+    "EURUSD": {
+        "symbol_candidates": ["EURUSD", "EURUSDm", "EURUSDc"],
+        "symbol":    "EURUSD",
+        "timeframe": mt5.TIMEFRAME_M15,
+        "tf_name":   "M15",
+        "strategy":  "structure_trader",
+
+        "dual_trade": {
+            "trade_a_lot":            0.01,
+            "trade_b_lot":            0.01,
+            "trade_b_profit_usd":     0.50,   # 5 pips quick lock
+            "trade_b_max_loss_usd":   0,
+            "min_balance_for_b":      100.0,
+        },
+
+        "entry": {
+            "min_rr":               1.0,
+            "min_sl_atr":           0.5,
+            "max_sl_usd":           3.0,      # 30 pips cap
+            "near_bound_atr":       1.5,
+            "swing_near_bound_atr": 2.5,
+            "max_lookback_bars":    30,
+            "breakout_lookback_min":30,
+            "tp_b_profit_usd":      0.50,
+            "sessions":             [[8, 22]],
+            "enable_sweep_reclaim":   True,
+            "enable_level_touch":     True,
+            "enable_range_reversal":  False,
+            "enable_range_breakout":  False,
+            "enable_trend_pullback":  False,
+            "min_prior_touches":     2,
+            "min_body_ratio":        0.4,
+            "sl_buffer_atr_sweep":   0.2,
+            "min_sweep_atr":         0.1,
+        },
+
+        "structure": {
+            "h4_range_band_pct":    1.0,
+            "h1_range_band_pct":    0.6,
+            "m15_range_band_pct":   0.4,
+            "swing_left":           5,
+            "swing_right":          5,
+            "min_swings":           3,
+            "h4_bars":              400,
+            "h1_bars":              500,
+            "m15_bars":             500,
+        },
+    },
+
+    # ── GBPUSD — Structure-based trader ─────────────────────────────────────
+    # Volatile but structurally respectful. Wider SL tolerance than EURUSD.
+    "GBPUSD": {
+        "symbol_candidates": ["GBPUSD", "GBPUSDm", "GBPUSDc"],
+        "symbol":    "GBPUSD",
+        "timeframe": mt5.TIMEFRAME_M15,
+        "tf_name":   "M15",
+        "strategy":  "structure_trader",
+
+        "dual_trade": {
+            "trade_a_lot":            0.01,
+            "trade_b_lot":            0.01,
+            "trade_b_profit_usd":     0.60,   # 6 pips
+            "trade_b_max_loss_usd":   0,
+            "min_balance_for_b":      100.0,
+        },
+
+        "entry": {
+            "min_rr":               1.0,
+            "min_sl_atr":           0.5,
+            "max_sl_usd":           4.0,      # 40 pips cap
+            "near_bound_atr":       1.5,
+            "swing_near_bound_atr": 2.5,
+            "max_lookback_bars":    30,
+            "breakout_lookback_min":30,
+            "tp_b_profit_usd":      0.60,
+            "sessions":             [[8, 22]],
+            "enable_sweep_reclaim":   True,
+            "enable_level_touch":     True,
+            "enable_range_reversal":  False,
+            "enable_range_breakout":  False,
+            "enable_trend_pullback":  False,
+            "min_prior_touches":     2,
+            "min_body_ratio":        0.4,
+            "sl_buffer_atr_sweep":   0.2,
+            "min_sweep_atr":         0.1,
+        },
+
+        "structure": {
+            "h4_range_band_pct":    1.2,
+            "h1_range_band_pct":    0.7,
+            "m15_range_band_pct":   0.5,
+            "swing_left":           5,
+            "swing_right":          5,
+            "min_swings":           3,
+            "h4_bars":              400,
+            "h1_bars":              500,
+            "m15_bars":             500,
+        },
+    },
+
+    # ── USDJPY — Structure-based trader ─────────────────────────────────────
+    # Clean trends, strong NY session. JPY pip = 0.01 (not 0.0001).
+    "USDJPY": {
+        "symbol_candidates": ["USDJPY", "USDJPYm", "USDJPYc"],
+        "symbol":    "USDJPY",
+        "timeframe": mt5.TIMEFRAME_M15,
+        "tf_name":   "M15",
+        "strategy":  "structure_trader",
+
+        "dual_trade": {
+            "trade_a_lot":            0.01,
+            "trade_b_lot":            0.01,
+            "trade_b_profit_usd":     0.60,   # ~6 pips
+            "trade_b_max_loss_usd":   0,
+            "min_balance_for_b":      100.0,
+        },
+
+        "entry": {
+            "min_rr":               1.0,
+            "min_sl_atr":           0.5,
+            "max_sl_usd":           4.0,
+            "near_bound_atr":       1.5,
+            "swing_near_bound_atr": 2.5,
+            "max_lookback_bars":    30,
+            "breakout_lookback_min":30,
+            "tp_b_profit_usd":      0.60,
+            "sessions":             [[8, 22]],
+            "enable_sweep_reclaim":   True,
+            "enable_level_touch":     True,
+            "enable_range_reversal":  False,
+            "enable_range_breakout":  False,
+            "enable_trend_pullback":  False,
+            "min_prior_touches":     2,
+            "min_body_ratio":        0.4,
+            "sl_buffer_atr_sweep":   0.2,
+            "min_sweep_atr":         0.1,
+        },
+
+        "structure": {
+            "h4_range_band_pct":    1.0,
+            "h1_range_band_pct":    0.6,
+            "m15_range_band_pct":   0.4,
+            "swing_left":           5,
+            "swing_right":          5,
+            "min_swings":           3,
+            "h4_bars":              400,
+            "h1_bars":              500,
+            "m15_bars":             500,
+        },
+    },
+
+    # ── AUDUSD — Structure-based trader ─────────────────────────────────────
+    # Ranges cleanly, commodity-adjacent diversification vs the USD pairs above.
+    "AUDUSD": {
+        "symbol_candidates": ["AUDUSD", "AUDUSDm", "AUDUSDc"],
+        "symbol":    "AUDUSD",
+        "timeframe": mt5.TIMEFRAME_M15,
+        "tf_name":   "M15",
+        "strategy":  "structure_trader",
+
+        "dual_trade": {
+            "trade_a_lot":            0.01,
+            "trade_b_lot":            0.01,
+            "trade_b_profit_usd":     0.50,
+            "trade_b_max_loss_usd":   0,
+            "min_balance_for_b":      100.0,
+        },
+
+        "entry": {
+            "min_rr":               1.0,
+            "min_sl_atr":           0.5,
+            "max_sl_usd":           3.0,
+            "near_bound_atr":       1.5,
+            "swing_near_bound_atr": 2.5,
+            "max_lookback_bars":    30,
+            "breakout_lookback_min":30,
+            "tp_b_profit_usd":      0.50,
+            "sessions":             [[8, 22]],
+            "enable_sweep_reclaim":   True,
+            "enable_level_touch":     True,
+            "enable_range_reversal":  False,
+            "enable_range_breakout":  False,
+            "enable_trend_pullback":  False,
+            "min_prior_touches":     2,
+            "min_body_ratio":        0.4,
+            "sl_buffer_atr_sweep":   0.2,
+            "min_sweep_atr":         0.1,
+        },
+
+        "structure": {
+            "h4_range_band_pct":    1.0,
+            "h1_range_band_pct":    0.6,
+            "m15_range_band_pct":   0.4,
             "swing_left":           5,
             "swing_right":          5,
             "min_swings":           3,

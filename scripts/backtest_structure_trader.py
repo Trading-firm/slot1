@@ -36,13 +36,27 @@ from config.markets import MARKETS
 # ── Backtest config ────────────────────────────────────────────────────────
 START_DATE    = datetime(2026, 1, 1,  tzinfo=timezone.utc)
 END_DATE      = datetime(2026, 4, 22, tzinfo=timezone.utc)
-SYMBOL        = next(iter(MARKETS.keys()))         # first symbol from config
+# Pick symbol from CLI arg if provided, else first market in config.
+SYMBOL        = sys.argv[1] if len(sys.argv) > 1 else next(iter(MARKETS.keys()))
 BACKTEST_DB   = os.path.join("data", "backtest_levels.db")
 
-# Per-symbol spreads/slippage + contract size (Exness Raw)
+# Per-symbol spreads/slippage + contract size. Spreads measured on Exness
+# Real Micro (suffix 'm'). For JPY pairs, "contract" is the effective USD per
+# 1.0 lot per 1.0 price unit (100_000 / USDJPY_rate ≈ 667 at rate 150) — this
+# makes P/L come out in USD without needing a live FX conversion inside the loop.
+_forex_m = {"spread": 0.00010, "slippage": 0.00003, "contract": 100_000}
+_jpy_m   = {"spread": 0.010,   "slippage": 0.003,   "contract": 667}
 SYMBOL_SPECS = {
-    "XAUUSD": {"spread": 0.155, "slippage": 0.15, "contract": 100},
-    "BTCUSD": {"spread": 6.00,  "slippage": 3.00, "contract": 1.0},
+    "XAUUSD": {"spread": 0.28,    "slippage": 0.15,    "contract": 100},
+    "XAUUSDm":{"spread": 0.28,    "slippage": 0.15,    "contract": 100},
+    "BTCUSD": {"spread": 6.00,    "slippage": 3.00,    "contract": 1.0},
+    "BTCUSDm":{"spread": 6.00,    "slippage": 3.00,    "contract": 1.0},
+    "EURUSD": {"spread": 0.00008, "slippage": 0.00002, "contract": 100_000},
+    "EURUSDm":{"spread": 0.00008, "slippage": 0.00002, "contract": 100_000},
+    "GBPUSD": _forex_m, "GBPUSDm": _forex_m,
+    "USDJPY": _jpy_m,   "USDJPYm": _jpy_m,
+    "AUDUSD": {"spread": 0.00009, "slippage": 0.00003, "contract": 100_000},
+    "AUDUSDm":{"spread": 0.00009, "slippage": 0.00003, "contract": 100_000},
 }
 _spec = SYMBOL_SPECS.get(SYMBOL, {"spread": 1.0, "slippage": 0.5, "contract": 1.0})
 SPREAD        = _spec["spread"]
@@ -403,7 +417,16 @@ def summarize(trades: List[BTTrade]):
 def main():
     if not connect(): return
     mt5.symbol_select(SYMBOL, True)
-    cfg = MARKETS[SYMBOL]
+    # Resolve config: direct key, or scan symbol_candidates for a match.
+    cfg = MARKETS.get(SYMBOL)
+    if cfg is None:
+        for k, v in MARKETS.items():
+            if SYMBOL in v.get("symbol_candidates", []):
+                cfg = v
+                break
+    if cfg is None:
+        print(f"No config found for {SYMBOL}")
+        disconnect(); return
     print(f"\nConfig: strategy={cfg['strategy']}  lot_A={cfg['dual_trade']['trade_a_lot']}  lot_B={cfg['dual_trade']['trade_b_lot']}  tp_B=${cfg['dual_trade']['trade_b_profit_usd']}")
     print(f"Spread modeled: ${SPREAD}  |  Slippage: ${SLIPPAGE}")
 

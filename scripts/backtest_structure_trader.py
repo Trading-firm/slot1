@@ -38,7 +38,7 @@ START_DATE    = datetime(2026, 1, 1,  tzinfo=timezone.utc)
 END_DATE      = datetime(2026, 4, 22, tzinfo=timezone.utc)
 # Pick symbol from CLI arg if provided, else first market in config.
 SYMBOL        = sys.argv[1] if len(sys.argv) > 1 else next(iter(MARKETS.keys()))
-BACKTEST_DB   = os.path.join("data", "backtest_levels.db")
+BACKTEST_DB   = os.path.join("data", f"backtest_levels_{SYMBOL}.db")
 
 # Per-symbol spreads/slippage + contract size. Spreads measured on Exness
 # Real Micro (suffix 'm'). For JPY pairs, "contract" is the effective USD per

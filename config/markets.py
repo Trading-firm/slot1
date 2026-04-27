@@ -46,26 +46,23 @@ def _fx_market(name: str, candidates, strategy_preset: str = "baseline",
 
 
 MARKETS = {
-    # ── 9 reliable winners — locked to their best-performing strategy ──────
-    # (sweep over 10 strategies × 30-day backtest, 2026-03-22 → 2026-04-22)
-    # Exotic pairs (USDSEK/NOK/MXN/ZAR) removed: foreign-currency P/L produced
-    # inflated backtest numbers; real account P/L would need conversion.
+    # ── 8 admitted markets (≥45% backtest WR + reasonable spread) ──────────
+    # Round 5 added bull-stacked combos (bull_london/ny/overlap, bull_rr15, rr_25)
+    # which qualified USDCHF + AUDJPY and upgraded EURUSD + CADJPY.
     "GBPUSD": _fx_market("GBPUSD", ["GBPUSD", "GBPUSDm", "GBPUSDc"],
-                         strategy_preset="baseline",   max_sl_usd=4.0),
+                         strategy_preset="baseline",     max_sl_usd=4.0),  # 47.7% WR
     "USDCAD": _fx_market("USDCAD", ["USDCAD", "USDCADm", "USDCADc"],
-                         strategy_preset="rr_15",      max_sl_usd=3.5),
-    "GBPJPY": _fx_market("GBPJPY", ["GBPJPY", "GBPJPYm", "GBPJPYc"],
-                         strategy_preset="rr_30",      max_sl_usd=6.0),
+                         strategy_preset="rr_15",        max_sl_usd=3.5),  # 59.1% WR
     "EURUSD": _fx_market("EURUSD", ["EURUSD", "EURUSDm", "EURUSDc"],
-                         strategy_preset="bull_only",  max_sl_usd=3.0),
+                         strategy_preset="bull_london",  max_sl_usd=3.0),  # 50.0% WR (upgraded R5)
     "EURCAD": _fx_market("EURCAD", ["EURCAD", "EURCADm", "EURCADc"],
-                         strategy_preset="london",     max_sl_usd=4.0),
+                         strategy_preset="london",       max_sl_usd=4.0),  # 45.0% WR (user's fav)
     "GBPAUD": _fx_market("GBPAUD", ["GBPAUD", "GBPAUDm", "GBPAUDc"],
-                         strategy_preset="overlap",    max_sl_usd=5.0),
-    "USDSGD": _fx_market("USDSGD", ["USDSGD", "USDSGDm", "USDSGDc"],
-                         strategy_preset="overlap",    max_sl_usd=3.0),
-    "AUDCAD": _fx_market("AUDCAD", ["AUDCAD", "AUDCADm", "AUDCADc"],
-                         strategy_preset="overlap",    max_sl_usd=3.5),
-    "GBPSGD": _fx_market("GBPSGD", ["GBPSGD", "GBPSGDm", "GBPSGDc"],
-                         strategy_preset="ny",         max_sl_usd=5.0),
+                         strategy_preset="overlap",      max_sl_usd=5.0),  # 47.1% WR
+    "CADJPY": _fx_market("CADJPY", ["CADJPY", "CADJPYm", "CADJPYc"],
+                         strategy_preset="bull_overlap", max_sl_usd=4.0),  # 72.7% WR (upgraded R5)
+    "AUDJPY": _fx_market("AUDJPY", ["AUDJPY", "AUDJPYm", "AUDJPYc"],
+                         strategy_preset="bull_london",  max_sl_usd=4.0),  # 54.5% WR (admitted R5)
+    "USDCHF": _fx_market("USDCHF", ["USDCHF", "USDCHFm", "USDCHFc"],
+                         strategy_preset="bull_overlap", max_sl_usd=3.5),  # 66.7% WR (admitted R5)
 }

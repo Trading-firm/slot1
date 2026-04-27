@@ -36,6 +36,7 @@ def _base(**overrides) -> dict:
 STRATEGIES = {
     "baseline":     _base(),
     "rr_15":        _base(min_rr=1.5),
+    "rr_25":        _base(min_rr=2.5),                    # NEW: between baseline & rr_30
     "rr_30":        _base(min_rr=3.0),
     "bull_only":    _base(required_pattern=BULL_PATTERNS),
     "bear_only":    _base(required_pattern=BEAR_PATTERNS),
@@ -44,4 +45,9 @@ STRATEGIES = {
     "overlap":      _base(sessions=[[13, 17]]),
     "fast_ema":     _base(ema_trend=100, ema_pullback=20, min_rr=1.5),
     "strict_trend": _base(chop_band_atr=1.5),
+    # ── Bull-only stacked combos (target USDCHF / AUDJPY) ──
+    "bull_london":  _base(required_pattern=BULL_PATTERNS, sessions=[[8, 13]]),
+    "bull_ny":      _base(required_pattern=BULL_PATTERNS, sessions=[[13, 22]]),
+    "bull_overlap": _base(required_pattern=BULL_PATTERNS, sessions=[[13, 17]]),
+    "bull_rr15":    _base(required_pattern=BULL_PATTERNS, min_rr=1.5),
 }

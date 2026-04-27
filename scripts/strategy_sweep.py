@@ -269,22 +269,33 @@ def main():
         verdict = "++" if best_net > 5 else ("+" if best_net > 0 else "-")
         print(f"  {market:<10}" + "".join(row_cells) + f"  {best_strat:>10}{verdict:<3}")
 
-    # ── Per-market best strategy ────────────────────────────────────
+    # ── Per-market best strategy (WR ≥ 45% AND NET > 0) ─────────────
+    WR_FLOOR = 45.0
     print("\n" + "="*120)
-    print("BEST STRATEGY PER MARKET")
+    print(f"BEST STRATEGY PER MARKET — admission gate: WR >= {WR_FLOOR}% AND NET > 0")
     print("="*120)
-    print(f"  {'market':<10}  {'best strategy':<14}  {'trades':>7}  {'WR':>6}  {'NET':>10}")
-    print(f"  {'-'*10}  {'-'*14}  {'-'*7}  {'-'*6}  {'-'*10}")
-    profitable = []
+    print(f"  {'market':<10}  {'best strategy':<14}  {'trades':>7}  {'WR':>6}  {'NET':>10}  verdict")
+    print(f"  {'-'*10}  {'-'*14}  {'-'*7}  {'-'*6}  {'-'*10}  {'-'*10}")
+    qualified = []
     for market, by_strat in results.items():
-        best = max(by_strat.items(), key=lambda kv: kv[1]["net"])
-        sn, s = best
-        marker = " ✓" if s["net"] > 0 else ""
-        print(f"  {market:<10}  {sn:<14}  {s['n']:>7}  {s['wr']:>5.1f}%  ${s['net']:>+9.2f}{marker}")
-        if s["net"] > 0:
-            profitable.append((market, sn, s["net"]))
+        # Filter to qualifying strategies (WR >= floor AND NET > 0)
+        passing = [(sn, s) for sn, s in by_strat.items()
+                   if s["wr"] >= WR_FLOOR and s["net"] > 0]
+        if passing:
+            sn, s = max(passing, key=lambda kv: kv[1]["net"])
+            verdict = "ADMIT"
+            qualified.append((market, sn, s["net"], s["wr"]))
+        else:
+            # Show the highest-NET as info even though it doesn't qualify
+            sn, s = max(by_strat.items(), key=lambda kv: kv[1]["net"])
+            verdict = "REJECT"
+        print(f"  {market:<10}  {sn:<14}  {s['n']:>7}  {s['wr']:>5.1f}%  ${s['net']:>+9.2f}  {verdict}")
 
-    print(f"\n  {len(profitable)} of {len(results)} markets have a profitable strategy.")
+    print(f"\n  {len(qualified)} of {len(results)} markets pass the admission gate.")
+    if qualified:
+        print("\n  Qualified markets (lock these):")
+        for market, sn, net, wr in sorted(qualified, key=lambda x: -x[2]):
+            print(f"    {market:<10}  preset={sn:<14}  WR={wr:.1f}%  NET=${net:+.2f}")
 
 
 if __name__ == "__main__":

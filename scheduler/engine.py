@@ -23,7 +23,7 @@ from broker.mt5_connector import (
     get_open_positions, place_order, close_order,
     get_symbol_info, resolve_symbol,
 )
-from strategies.trend_follower import find_entry, trend_flipped
+from strategies.trend_follower import find_entry, trend_flipped, diagnose
 from risk.manager import RiskManager
 from database.firebase import init_db
 from database.repository import TradeRepo, SummaryRepo, StateRepo
@@ -138,6 +138,7 @@ class TradingEngine:
 
         # Single trade per symbol — skip if a position is already open on this symbol.
         if get_open_positions(symbol):
+            logger.info(f"[{symbol}] position already open — skipping")
             return
 
         entry_cfg = cfg["entry"]
@@ -152,12 +153,19 @@ class TradingEngine:
                     exit_time = datetime.fromisoformat(exit_time)
                 cooldown_until = exit_time + timedelta(minutes=15 * cooldown_bars)
                 if datetime.now(timezone.utc) < cooldown_until:
+                    remaining = (cooldown_until - datetime.now(timezone.utc)).total_seconds() / 60
+                    logger.info(f"[{symbol}] cooldown active — {remaining:.0f} min remaining")
                     return
 
         df = fetch_candles(symbol, mt5.TIMEFRAME_M15, count=300)
         if df.empty or len(df) < 210:
             logger.info(f"[{symbol}] insufficient bars ({len(df)})")
             return
+
+        # Always log the market state (helps see what's happening even with no signal).
+        status = diagnose(df, entry_cfg, bar_idx=-2)
+        preset = cfg.get("strategy_preset", "?")
+        logger.info(f"[{symbol}] preset={preset} | {status}")
 
         setup = find_entry(df, entry_cfg, bar_idx=-2)
         if setup is None:

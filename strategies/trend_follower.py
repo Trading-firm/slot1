@@ -165,6 +165,82 @@ def find_entry(
     )
 
 
+def diagnose(df: pd.DataFrame, cfg: dict, bar_idx: int = -2) -> str:
+    """
+    Return a one-line status string describing where the strategy currently
+    stands on `bar_idx`. Used by the live engine to log per-market state on
+    every cycle, even when no signal fires.
+
+    Examples:
+      "UPTREND | EMA200=1.27123 close=1.27250 | pulled back | hammer ✓ → SIGNAL BUY"
+      "UPTREND | EMA200=1.27123 close=1.27250 | no pullback in 6 bars"
+      "CHOP zone (close within 0.5×ATR of EMA200)"
+      "DOWNTREND | pulled back | no entry pattern on this bar"
+    """
+    n = len(df)
+    if bar_idx < 0:
+        bar_idx = n + bar_idx
+    if bar_idx < 0 or bar_idx >= n:
+        return "out-of-range bar"
+
+    ema_trend_period    = cfg.get("ema_trend",          200)
+    ema_pullback_period = cfg.get("ema_pullback",       50)
+    pullback_lookback   = cfg.get("pullback_lookback",  6)
+    chop_band_atr       = cfg.get("chop_band_atr",      0.5)
+    required_pattern    = cfg.get("required_pattern",   DEFAULT_PATTERNS)
+
+    if bar_idx < ema_trend_period:
+        return f"warming up ({bar_idx}/{ema_trend_period} bars)"
+
+    ema_t_series = calc_ema(df, ema_trend_period)
+    ema_p_series = calc_ema(df, ema_pullback_period)
+    atr_series   = calc_atr(df, 14)
+    ema_t = float(ema_t_series.iloc[bar_idx])
+    ema_p = float(ema_p_series.iloc[bar_idx])
+    atr   = float(atr_series.iloc[bar_idx])
+    if pd.isna(ema_t) or pd.isna(ema_p) or pd.isna(atr) or atr <= 0:
+        return "indicators not ready"
+
+    bar_close = float(df["Close"].iloc[bar_idx])
+    chop_buf  = chop_band_atr * atr
+
+    # Trend state
+    if abs(bar_close - ema_t) <= chop_buf:
+        return f"CHOP | close={bar_close:.5f} within {chop_buf:.5f} of EMA200={ema_t:.5f}"
+
+    if bar_close > ema_t:
+        trend, side = "UPTREND", DIR_BUY
+    else:
+        trend, side = "DOWNTREND", DIR_SELL
+
+    base = f"{trend} | EMA200={ema_t:.5f} close={bar_close:.5f}"
+
+    # Pullback check
+    start = max(0, bar_idx - pullback_lookback + 1)
+    pulled_back = False
+    for i in range(start, bar_idx + 1):
+        ema_p_i = ema_p_series.iloc[i]
+        if pd.isna(ema_p_i):
+            continue
+        if side == DIR_BUY and float(df["Low"].iloc[i]) <= ema_p_i:
+            pulled_back = True; break
+        if side == DIR_SELL and float(df["High"].iloc[i]) >= ema_p_i:
+            pulled_back = True; break
+
+    if not pulled_back:
+        return f"{base} | no pullback to EMA{ema_pullback_period} in last {pullback_lookback} bars"
+
+    # Pattern check
+    matches = detect_patterns(
+        df, bar_idx=bar_idx,
+        direction_filter=side,
+        enabled=required_pattern,
+    )
+    if not matches:
+        return f"{base} | pulled back, no {side} pattern on bar"
+    return f"{base} | pulled back | {matches[0].name} → SIGNAL {side}"
+
+
 def trend_flipped(df: pd.DataFrame, direction: str, ema_trend_period: int = 200,
                   bar_idx: int = -2, chop_band_atr: float = 0.5) -> bool:
     """

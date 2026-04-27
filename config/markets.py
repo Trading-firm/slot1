@@ -1,354 +1,71 @@
 """
 config/markets.py
 ─────────────────
-Structure-based trader across BTCUSD + forex majors + gold.
+Trend-following trader across 15 forex pairs.
 
-Strategy 'structure_trader' pipeline:
-  1. MTF bias — H4 leads, H1 vetoes conflicts (NEVER against bigger TF trend)
-  2. Level memory — swings + range bounds persisted to data/levels.db
-  3. Entry engine — pure price action, high-WR focus (see scenario priority below)
-  4. Dual-trade execution (A + optional B scalp)
-  5. Structural cooldown — no re-entry until a new confirmed M15 swing forms after last exit
+Each market has its own `entry` config — typically one of the 10 named
+strategy presets in strategies/strategy_presets.py, chosen per market
+based on backtest performance (strategy_sweep.py).
 
-── Scenario priority (highest WR first) ──────────────────────────────────────
-  1. sweep_reclaim  — price wicks past a swing level then closes back through it
-                      (stop-hunt reversal — crypto's highest-WR pattern)
-  2. level_touch    — bar tests swing level, closes strongly back (proven S/R only,
-                      requires prior touches + strong close)
-  3. range_reversal — M15 swing at H4 range bound
-  4. range_breakout / trend_pullback — off by default (historically net-negative)
-
-── Session filter ────────────────────────────────────────────────────────────
-  sessions = [[8, 22]] → trade 08:00-22:00 UTC only (London + NY)
-  Outside session = no entries (Asian hours = chop on BTC M15).
-
-Editable per market:
-  dual_trade.trade_a_lot / trade_b_lot     lot sizes
-  dual_trade.trade_b_profit_usd            B's scalp target in $  (0 = disable B)
-  dual_trade.trade_b_max_loss_usd          B's max loss cap
-  entry.min_rr                             R:R target for A
-  entry.min_prior_touches                  require N prior touches of a level before trading it
-  entry.min_body_ratio                     close must be in top/bottom (1-min_body_ratio) of bar
-  entry.sessions                           list of [start,end] UTC hour pairs
-  entry.max_sl_usd                         reject setups exceeding this A-loss cap
-  entry.min_sl_atr                         floor SL at this × ATR  (0 = off)
+Strategy 'trend_follower' pipeline (per "The Candlestick Trading Bible"):
+  1. Trend filter: M15 close vs EMA200 (with chop-zone band)
+  2. Pullback: price retraced into EMA50 area within last N bars
+  3. Entry confirmation: directional candlestick pattern fires on entry bar
+  4. Single trade A (Trade B disabled across all markets)
+  5. Trend-flip early exit: close if M15 close crosses EMA200 against the trade
 """
 import MetaTrader5 as mt5
+from strategies.strategy_presets import STRATEGIES
+
+
+def _fx_market(name: str, candidates, strategy_preset: str = "baseline",
+               max_sl_usd: float = 3.0) -> dict:
+    """
+    Build a market config. `strategy_preset` selects an entry config from
+    strategies/strategy_presets.py (one of: baseline, rr_15, rr_30, bull_only,
+    bear_only, london, ny, overlap, fast_ema, strict_trend).
+    """
+    entry = dict(STRATEGIES[strategy_preset])     # copy preset
+    entry["max_sl_usd"] = max_sl_usd              # apply per-market SL cap
+    return {
+        "symbol_candidates": candidates,
+        "symbol":    name,
+        "timeframe": mt5.TIMEFRAME_M15,
+        "tf_name":   "M15",
+        "strategy":  "trend_follower",
+        "strategy_preset": strategy_preset,
+        "dual_trade": {
+            "trade_a_lot":           0.01,
+            "trade_b_lot":           0.01,
+            "trade_b_profit_usd":    0,        # Trade B disabled across all markets
+            "trade_b_max_loss_usd":  0,
+            "min_balance_for_b":     100.0,
+        },
+        "entry": entry,
+    }
+
 
 MARKETS = {
-
-    # ── BTCUSD — Structure-based trader ─────────────────────────────────────
-    # symbol_candidates: bot picks the first one that exists on the connected
-    # account. Demo (Trial) uses 'BTCUSD'; real micro account uses 'BTCUSDm'.
-    # Add more variants here if other brokers/account types use different names.
-    "BTCUSD": {
-        "symbol_candidates": ["BTCUSD", "BTCUSDm", "BTCUSDc", "BTC/USD"],
-        "symbol":    "BTCUSD",   # fallback / legacy display name
-        "timeframe": mt5.TIMEFRAME_M15,
-        "tf_name":   "M15",
-        "strategy":  "structure_trader",
-
-        # Dual-trade execution — places 2 orders per signal (A + B)
-        "dual_trade": {
-            "trade_a_lot":            0.01,
-            "trade_b_lot":            0.01,
-            "trade_b_profit_usd":     1,    # $2 scalp (0 = disable trade B entirely)
-            "trade_b_max_loss_usd":  0,    # tighter SL — B's avg loss must be < avg win
-            "min_balance_for_b":      100.0,   # accounts below this skip B (capital protection)
-        },
-
-        # Entry engine thresholds
-        "entry": {
-            "min_rr":               1.0,      # 1R targets reach far more often than 1.5R+ on M15
-            "min_sl_atr":           0.5,      # floor SL at ½ ATR — kills micro-SL trades that spread eats
-            "max_sl_usd":           15.0,
-            "near_bound_atr":       1.5,
-            "swing_near_bound_atr": 2.5,
-            "max_lookback_bars":    30,
-            "breakout_lookback_min":30,
-            "tp_b_profit_usd":      2.00,
-            # Session filter — London + NY only (skip Asian chop 22-08 UTC)
-            "sessions":             [[8, 22]],
-            # Scenario kill-switches
-            "enable_sweep_reclaim":   True,   # primary high-WR scenario
-            "enable_level_touch":     True,   # secondary
-            "enable_range_reversal":  False,
-            "enable_range_breakout":  False,
-            "enable_trend_pullback":  False,
-            # Quality filters
-            "min_prior_touches":     2,       # level must have been tested ≥2x before entry
-            "min_body_ratio":        0.4,     # close in top/bottom 40% of bar range (strong rejection)
-            "sl_buffer_atr_sweep":   0.2,     # SL placed 0.2 ATR beyond sweep wick
-            "min_sweep_atr":         0.1,     # wick must pierce level by ≥ 0.1 ATR
-        },
-
-        # Structure detection thresholds
-        "structure": {
-            "h4_range_band_pct":    4.0,    # BTC ranges are wider — 4% band for H4
-            "h1_range_band_pct":    2.5,
-            "m15_range_band_pct":   2.0,
-            "swing_left":           5,
-            "swing_right":          5,
-            "min_swings":           3,
-            "h4_bars":              400,
-            "h1_bars":              500,
-            "m15_bars":             500,
-        },
-    },
-
-    # ── XAUUSD (Gold) — Structure-based trader ──────────────────────────────
-    # Gold respects swing structure cleanly on M15. Wider ranges than forex.
-    # 0.01 lot ≈ 1 oz → $1 move = $1 P/L.
-    "XAUUSD": {
-        "symbol_candidates": ["XAUUSD", "XAUUSDm", "XAUUSDc", "GOLD"],
-        "symbol":    "XAUUSD",
-        "timeframe": mt5.TIMEFRAME_M15,
-        "tf_name":   "M15",
-        "strategy":  "structure_trader",
-
-        "dual_trade": {
-            "trade_a_lot":            0.01,
-            "trade_b_lot":            0.01,
-            "trade_b_profit_usd":     2.00,
-            "trade_b_max_loss_usd":   0,
-            "min_balance_for_b":      100.0,
-        },
-
-        "entry": {
-            "min_rr":               1.0,
-            "min_sl_atr":           0.5,
-            "max_sl_usd":           10.0,
-            "near_bound_atr":       1.5,
-            "swing_near_bound_atr": 2.5,
-            "max_lookback_bars":    30,
-            "breakout_lookback_min":30,
-            "tp_b_profit_usd":      2.00,
-            "sessions":             [[8, 22]],
-            "enable_sweep_reclaim":   True,
-            "enable_level_touch":     True,
-            "enable_range_reversal":  False,
-            "enable_range_breakout":  False,
-            "enable_trend_pullback":  False,
-            "min_prior_touches":     2,
-            "min_body_ratio":        0.4,
-            "sl_buffer_atr_sweep":   0.2,
-            "min_sweep_atr":         0.1,
-        },
-
-        "structure": {
-            "h4_range_band_pct":    2.5,
-            "h1_range_band_pct":    1.5,
-            "m15_range_band_pct":   1.0,
-            "swing_left":           5,
-            "swing_right":          5,
-            "min_swings":           3,
-            "h4_bars":              400,
-            "h1_bars":              500,
-            "m15_bars":             500,
-        },
-    },
-
-    # ── EURUSD — Structure-based trader ─────────────────────────────────────
-    # Cleanest M15 structure among majors, tightest spread. 0.01 lot → 1 pip = $0.10.
-    "EURUSD": {
-        "symbol_candidates": ["EURUSD", "EURUSDm", "EURUSDc"],
-        "symbol":    "EURUSD",
-        "timeframe": mt5.TIMEFRAME_M15,
-        "tf_name":   "M15",
-        "strategy":  "structure_trader",
-
-        "dual_trade": {
-            "trade_a_lot":            0.01,
-            "trade_b_lot":            0.01,
-            "trade_b_profit_usd":     0.50,   # 5 pips quick lock
-            "trade_b_max_loss_usd":   0,
-            "min_balance_for_b":      100.0,
-        },
-
-        "entry": {
-            "min_rr":               1.0,
-            "min_sl_atr":           0.5,
-            "max_sl_usd":           3.0,      # 30 pips cap
-            "near_bound_atr":       1.5,
-            "swing_near_bound_atr": 2.5,
-            "max_lookback_bars":    30,
-            "breakout_lookback_min":30,
-            "tp_b_profit_usd":      0.50,
-            "sessions":             [[8, 22]],
-            "enable_sweep_reclaim":   True,
-            "enable_level_touch":     True,
-            "enable_range_reversal":  False,
-            "enable_range_breakout":  False,
-            "enable_trend_pullback":  False,
-            "min_prior_touches":     2,
-            "min_body_ratio":        0.4,
-            "sl_buffer_atr_sweep":   0.2,
-            "min_sweep_atr":         0.1,
-        },
-
-        "structure": {
-            "h4_range_band_pct":    1.0,
-            "h1_range_band_pct":    0.6,
-            "m15_range_band_pct":   0.4,
-            "swing_left":           5,
-            "swing_right":          5,
-            "min_swings":           3,
-            "h4_bars":              400,
-            "h1_bars":              500,
-            "m15_bars":             500,
-        },
-    },
-
-    # ── GBPUSD — Structure-based trader ─────────────────────────────────────
-    # Volatile but structurally respectful. Wider SL tolerance than EURUSD.
-    "GBPUSD": {
-        "symbol_candidates": ["GBPUSD", "GBPUSDm", "GBPUSDc"],
-        "symbol":    "GBPUSD",
-        "timeframe": mt5.TIMEFRAME_M15,
-        "tf_name":   "M15",
-        "strategy":  "structure_trader",
-
-        "dual_trade": {
-            "trade_a_lot":            0.01,
-            "trade_b_lot":            0.01,
-            "trade_b_profit_usd":     0.60,   # 6 pips
-            "trade_b_max_loss_usd":   0,
-            "min_balance_for_b":      100.0,
-        },
-
-        "entry": {
-            "min_rr":               1.0,
-            "min_sl_atr":           0.5,
-            "max_sl_usd":           4.0,      # 40 pips cap
-            "near_bound_atr":       1.5,
-            "swing_near_bound_atr": 2.5,
-            "max_lookback_bars":    30,
-            "breakout_lookback_min":30,
-            "tp_b_profit_usd":      0.60,
-            "sessions":             [[8, 22]],
-            "enable_sweep_reclaim":   True,
-            "enable_level_touch":     True,
-            "enable_range_reversal":  False,
-            "enable_range_breakout":  False,
-            "enable_trend_pullback":  False,
-            "min_prior_touches":     2,
-            "min_body_ratio":        0.4,
-            "sl_buffer_atr_sweep":   0.2,
-            "min_sweep_atr":         0.1,
-        },
-
-        "structure": {
-            "h4_range_band_pct":    1.2,
-            "h1_range_band_pct":    0.7,
-            "m15_range_band_pct":   0.5,
-            "swing_left":           5,
-            "swing_right":          5,
-            "min_swings":           3,
-            "h4_bars":              400,
-            "h1_bars":              500,
-            "m15_bars":             500,
-        },
-    },
-
-    # ── USDJPY — Structure-based trader ─────────────────────────────────────
-    # Clean trends, strong NY session. JPY pip = 0.01 (not 0.0001).
-    "USDJPY": {
-        "symbol_candidates": ["USDJPY", "USDJPYm", "USDJPYc"],
-        "symbol":    "USDJPY",
-        "timeframe": mt5.TIMEFRAME_M15,
-        "tf_name":   "M15",
-        "strategy":  "structure_trader",
-
-        "dual_trade": {
-            "trade_a_lot":            0.01,
-            "trade_b_lot":            0.01,
-            "trade_b_profit_usd":     0.60,   # ~6 pips
-            "trade_b_max_loss_usd":   0,
-            "min_balance_for_b":      100.0,
-        },
-
-        "entry": {
-            "min_rr":               1.0,
-            "min_sl_atr":           0.5,
-            "max_sl_usd":           4.0,
-            "near_bound_atr":       1.5,
-            "swing_near_bound_atr": 2.5,
-            "max_lookback_bars":    30,
-            "breakout_lookback_min":30,
-            "tp_b_profit_usd":      0.60,
-            "sessions":             [[8, 22]],
-            "enable_sweep_reclaim":   True,
-            "enable_level_touch":     True,
-            "enable_range_reversal":  False,
-            "enable_range_breakout":  False,
-            "enable_trend_pullback":  False,
-            "min_prior_touches":     2,
-            "min_body_ratio":        0.4,
-            "sl_buffer_atr_sweep":   0.2,
-            "min_sweep_atr":         0.1,
-        },
-
-        "structure": {
-            "h4_range_band_pct":    1.0,
-            "h1_range_band_pct":    0.6,
-            "m15_range_band_pct":   0.4,
-            "swing_left":           5,
-            "swing_right":          5,
-            "min_swings":           3,
-            "h4_bars":              400,
-            "h1_bars":              500,
-            "m15_bars":             500,
-        },
-    },
-
-    # ── AUDUSD — Structure-based trader ─────────────────────────────────────
-    # Ranges cleanly, commodity-adjacent diversification vs the USD pairs above.
-    "AUDUSD": {
-        "symbol_candidates": ["AUDUSD", "AUDUSDm", "AUDUSDc"],
-        "symbol":    "AUDUSD",
-        "timeframe": mt5.TIMEFRAME_M15,
-        "tf_name":   "M15",
-        "strategy":  "structure_trader",
-
-        "dual_trade": {
-            "trade_a_lot":            0.01,
-            "trade_b_lot":            0.01,
-            "trade_b_profit_usd":     0.50,
-            "trade_b_max_loss_usd":   0,
-            "min_balance_for_b":      100.0,
-        },
-
-        "entry": {
-            "min_rr":               1.0,
-            "min_sl_atr":           0.5,
-            "max_sl_usd":           3.0,
-            "near_bound_atr":       1.5,
-            "swing_near_bound_atr": 2.5,
-            "max_lookback_bars":    30,
-            "breakout_lookback_min":30,
-            "tp_b_profit_usd":      0.50,
-            "sessions":             [[8, 22]],
-            "enable_sweep_reclaim":   True,
-            "enable_level_touch":     True,
-            "enable_range_reversal":  False,
-            "enable_range_breakout":  False,
-            "enable_trend_pullback":  False,
-            "min_prior_touches":     2,
-            "min_body_ratio":        0.4,
-            "sl_buffer_atr_sweep":   0.2,
-            "min_sweep_atr":         0.1,
-        },
-
-        "structure": {
-            "h4_range_band_pct":    1.0,
-            "h1_range_band_pct":    0.6,
-            "m15_range_band_pct":   0.4,
-            "swing_left":           5,
-            "swing_right":          5,
-            "min_swings":           3,
-            "h4_bars":              400,
-            "h1_bars":              500,
-            "m15_bars":             500,
-        },
-    },
+    # ── 9 reliable winners — locked to their best-performing strategy ──────
+    # (sweep over 10 strategies × 30-day backtest, 2026-03-22 → 2026-04-22)
+    # Exotic pairs (USDSEK/NOK/MXN/ZAR) removed: foreign-currency P/L produced
+    # inflated backtest numbers; real account P/L would need conversion.
+    "GBPUSD": _fx_market("GBPUSD", ["GBPUSD", "GBPUSDm", "GBPUSDc"],
+                         strategy_preset="baseline",   max_sl_usd=4.0),
+    "USDCAD": _fx_market("USDCAD", ["USDCAD", "USDCADm", "USDCADc"],
+                         strategy_preset="rr_15",      max_sl_usd=3.5),
+    "GBPJPY": _fx_market("GBPJPY", ["GBPJPY", "GBPJPYm", "GBPJPYc"],
+                         strategy_preset="rr_30",      max_sl_usd=6.0),
+    "EURUSD": _fx_market("EURUSD", ["EURUSD", "EURUSDm", "EURUSDc"],
+                         strategy_preset="bull_only",  max_sl_usd=3.0),
+    "EURCAD": _fx_market("EURCAD", ["EURCAD", "EURCADm", "EURCADc"],
+                         strategy_preset="london",     max_sl_usd=4.0),
+    "GBPAUD": _fx_market("GBPAUD", ["GBPAUD", "GBPAUDm", "GBPAUDc"],
+                         strategy_preset="overlap",    max_sl_usd=5.0),
+    "USDSGD": _fx_market("USDSGD", ["USDSGD", "USDSGDm", "USDSGDc"],
+                         strategy_preset="overlap",    max_sl_usd=3.0),
+    "AUDCAD": _fx_market("AUDCAD", ["AUDCAD", "AUDCADm", "AUDCADc"],
+                         strategy_preset="overlap",    max_sl_usd=3.5),
+    "GBPSGD": _fx_market("GBPSGD", ["GBPSGD", "GBPSGDm", "GBPSGDc"],
+                         strategy_preset="ny",         max_sl_usd=5.0),
 }

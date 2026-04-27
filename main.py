@@ -23,24 +23,15 @@ def run():
     logger.info("  UNIFIED TRADING BOT — STARTING")
     logger.info(f"  Markets    : {len(MARKETS)} active")
     for name, cfg in MARKETS.items():
-        strategy = cfg.get("strategy", "?")
-        if strategy == "structure_trader":
-            dual = cfg.get("dual_trade", {})
-            logger.info(
-                f"  {name:<25} | {cfg['tf_name']:<4} | strategy={strategy} | "
-                f"lot_A={dual.get('trade_a_lot')} lot_B={dual.get('trade_b_lot')} "
-                f"tp_B=${dual.get('trade_b_profit_usd')} max_loss_B=${dual.get('trade_b_max_loss_usd')}"
-            )
-        else:
-            sessions = cfg.get("filters", {}).get("sessions", [])
-            sess_str = ", ".join(
-                f"{s['start']:02d}h-{s['end']:02d}h" for s in sessions
-            ) if sessions else "24/7"
-            logger.info(
-                f"  {name:<25} | {cfg['tf_name']:<4} | "
-                f"ADX>={cfg.get('filters', {}).get('adx_min', 20):<3} | "
-                f"Sessions: {sess_str}"
-            )
+        entry = cfg.get("entry", {})
+        sessions = entry.get("sessions", [])
+        sess_str = ",".join(f"{s[0]:02d}-{s[1]:02d}" for s in sessions) or "24/7"
+        preset   = cfg.get("strategy_preset", "?")
+        lot      = cfg.get("dual_trade", {}).get("trade_a_lot", "?")
+        logger.info(
+            f"  {name:<8} | M15 | preset={preset:<13} | rr={entry.get('min_rr',0):.1f} | "
+            f"sess={sess_str:<11} | lot={lot} | max_sl=${entry.get('max_sl_usd',0):.1f}"
+        )
     logger.info(f"  Risk/Trade : {settings.RISK_PER_TRADE*100:.1f}%")
     logger.info(f"  Max Trades : {settings.MAX_OPEN_TRADES}")
     logger.info(f"  Daily Stop : {settings.MAX_DAILY_LOSS*100:.1f}%")
@@ -112,26 +103,25 @@ def status():
 
 
 def show_markets():
-    print("\n" + "=" * 70)
-    print("  ACTIVE MARKET CONFIGURATIONS")
-    print("=" * 70)
+    print("\n" + "=" * 80)
+    print("  ACTIVE MARKET CONFIGURATIONS — Trend-Follower")
+    print("=" * 80)
     for name, cfg in MARKETS.items():
-        f = cfg.get("filters", {})
-        sessions = f.get("sessions", [])
-        sess_str = ", ".join(
-            f"{s['start']:02d}h-{s['end']:02d}h WAT" for s in sessions
-        ) if sessions else "24/7"
+        entry = cfg.get("entry", {})
+        sessions = entry.get("sessions", [])
+        sess_str = ", ".join(f"{s[0]:02d}h-{s[1]:02d}h UTC" for s in sessions) if sessions else "24/7"
+        patterns = ", ".join(entry.get("required_pattern", []) or ["all"])
         print(
-            f"\n  {name}\n"
-            f"    Timeframe : {cfg['tf_name']}\n"
-            f"    ADX Min   : {f.get('adx_min', 20)}\n"
-            f"    Sessions  : {sess_str}\n"
-            f"    RSI Buy   : {f.get('rsi_min_buy', 35)}–{f.get('rsi_max_buy', 58)}\n"
-            f"    RSI Sell  : {f.get('rsi_min_sell', 42)}–{f.get('rsi_max_sell', 65)}\n"
-            f"    Max SL    : {cfg.get('max_sl_atr', 2.5)}x ATR\n"
-            f"    Min Lot   : {cfg.get('min_lot', 0.01)}"
+            f"\n  {name}  ({cfg.get('strategy_preset', '?')})\n"
+            f"    Timeframe       : {cfg['tf_name']}\n"
+            f"    EMA trend / pull: {entry.get('ema_trend')} / {entry.get('ema_pullback')}\n"
+            f"    Min R:R         : {entry.get('min_rr')}\n"
+            f"    Patterns        : {patterns}\n"
+            f"    Sessions        : {sess_str}\n"
+            f"    Max SL ($)      : {entry.get('max_sl_usd')}\n"
+            f"    Lot             : {cfg.get('dual_trade', {}).get('trade_a_lot')}"
         )
-    print("\n" + "=" * 70 + "\n")
+    print("\n" + "=" * 80 + "\n")
 
 
 if __name__ == "__main__":

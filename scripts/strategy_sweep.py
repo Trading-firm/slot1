@@ -203,6 +203,16 @@ def stats(trades: List[BTTrade]) -> dict:
 
 
 def resolve_symbol(market_key: str, candidates: List[str]) -> Optional[str]:
+    """Resolve broker symbol; reconnect once if MT5 dropped (long sweeps can
+    let the connection go stale)."""
+    for cand in candidates:
+        info = mt5.symbol_info(cand)
+        if info is not None:
+            return cand
+    # First pass returned None for all candidates — try a fresh MT5 reconnect.
+    disconnect()
+    if not connect():
+        return None
     for cand in candidates:
         if mt5.symbol_info(cand):
             return cand

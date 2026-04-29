@@ -35,7 +35,7 @@ def _fx_market(name: str, candidates, strategy_preset: str = "baseline",
         "strategy":  "trend_follower",
         "strategy_preset": strategy_preset,
         "dual_trade": {
-            "trade_a_lot":           0.01,
+            "trade_a_lot":           0.05,
             "trade_b_lot":           0.01,
             "trade_b_profit_usd":    0,        # Trade B disabled across all markets
             "trade_b_max_loss_usd":  0,
